@@ -33,6 +33,8 @@ export interface AppState {
 
   // ── Onboarding ────────────────────────────────────────────
   located: boolean
+  /** Where the device says the farmer is; null until geolocation resolves. */
+  locatedAt: [number, number] | null
   ob: 0 | 1 | 2 | 3 | 4
   pts: LatLng[]
   mapCenterTxt: string
@@ -117,6 +119,7 @@ const initial: AppState = {
   frost: false,
 
   located: false,
+  locatedAt: null,
   ob: 0,
   pts: [],
   mapCenterTxt: "SAT · LOCATING…",
@@ -185,8 +188,18 @@ export const useApp = create<AppState & AppActions>((set, get) => ({
   toggleFrost: () => set((s) => ({ frost: !s.frost })),
 
   allowLocate: () => {
+    // Optimistic: open the map immediately, recentre when the fix arrives.
+    // Geolocation needs HTTPS + a user gesture; failure just keeps the
+    // default centre, which the farmer can pan away from.
     set({ located: true })
     get().toast("Location found — centering on your fields")
+    if (typeof navigator !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => set({ locatedAt: [pos.coords.latitude, pos.coords.longitude] }),
+        () => {},
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      )
+    }
   },
   setPts: (pts) => set({ pts }),
   resetPts: () => set({ pts: [] }),

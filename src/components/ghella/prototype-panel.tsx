@@ -2,6 +2,7 @@ import { Switch } from "@/components/ui/switch"
 import type { Lang } from "@/i18n/dict"
 import { cn } from "@/lib/utils"
 import { useApp, type Screen } from "@/store/app-store"
+import { useParcels } from "@/store/parcel-store"
 
 const JUMPS: ReadonlyArray<{ id: Screen; label: string }> = [
   { id: "onboard", label: "First-run onboarding" },
@@ -39,6 +40,7 @@ export function PrototypePanel() {
   const toggleRain = useApp((s) => s.toggleRain)
   const toggleFrost = useApp((s) => s.toggleFrost)
   const reset = useApp((s) => s.reset)
+  const clearAllParcels = useParcels((s) => s.clearAllParcels)
 
   function jump(id: Screen) {
     if (id === "onboard") {
@@ -125,9 +127,14 @@ export function PrototypePanel() {
         ))}
       </div>
 
+      {/* Demo state AND the farmer's real mapped land: "Reset demo" must
+          return a reviewer to the true first-run experience. */}
       <button
         type="button"
-        onClick={reset}
+        onClick={() => {
+          reset()
+          clearAllParcels()
+        }}
         className="cursor-pointer rounded-[9px] border-[1.5px] border-line-dash py-2 text-center text-[12px] font-bold text-muted hover:bg-chip/60"
       >
         Reset demo

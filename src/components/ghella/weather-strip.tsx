@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion"
 
-import { forecast } from "@/data/weather"
+import { forecast as demoForecast, type WeatherDay } from "@/data/weather"
+import { useForecast } from "@/hooks/use-forecast"
 import { useT } from "@/i18n/use-t"
 import { fadeUp } from "@/lib/motion"
 import { cn } from "@/lib/utils"
@@ -8,12 +9,47 @@ import { useApp } from "@/store/app-store"
 
 import { CloudIcon, FrostIcon, RainIcon, SunIcon } from "./icons"
 
-/** Seven-day forecast — the horizontal scroller at the top of Home and Calendar. */
-export function WeatherStrip({ className }: { className?: string }) {
+/**
+ * Seven-day forecast — the horizontal scroller at the top of Home and Calendar.
+ *
+ * Given a `latlng` it shows the real Open-Meteo outlook for that point;
+ * without one it falls back to the bundled demo week, so existing call sites
+ * keep working untouched.
+ */
+export function WeatherStrip({
+  className,
+  latlng = null,
+}: {
+  className?: string
+  /** Where to fetch real weather for; omit to stay on the demo week. */
+  latlng?: [number, number] | null
+}) {
   const { lang } = useT()
   const rain = useApp((s) => s.rain)
   const frost = useApp((s) => s.frost)
-  const days = forecast(lang, { rain, frost })
+  const { forecast: live } = useForecast(latlng)
+
+  // The DEMO data wins whenever a scenario toggle (rain/frost) is on, latlng
+  // is missing, or the real fetch has produced nothing — so the prototype
+  // panel still demos deterministically offline, and the strip never renders
+  // blank while waiting on the network.
+  const useDemo = rain || frost || !latlng || !live || live.days.length === 0
+
+  const days: WeatherDay[] = useDemo
+    ? demoForecast(lang, { rain, frost })
+    : live.days.slice(0, 7).map((d, i) => ({
+        // Noon, not midnight: a bare ISO date parses as UTC midnight, which
+        // west of Greenwich renders yesterday's weekday. `lang` doubles as
+        // the locale, so "ar" gets Arabic day names for free.
+        d: new Date(d.date + "T12:00:00")
+          .toLocaleDateString(lang, { weekday: "short" })
+          .toUpperCase(),
+        t: Math.round(d.tMaxC),
+        sky: d.sky,
+        // Under a millimetre reads as noise, not rain — show nothing.
+        mm: d.rainMm >= 1 ? `${Math.round(d.rainMm)}mm` : "",
+        today: i === 0,
+      }))
 
   return (
     <div className={cn("no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4", className)}>
