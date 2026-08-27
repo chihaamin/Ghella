@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion"
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 
 import {
   CropShortlist,
@@ -7,6 +7,11 @@ import {
   priceMonth,
   selectShortlist,
 } from "@/components/decide/crop-shortlist"
+import {
+  PlanSetupSheet,
+  type PlanDraft,
+  type PlanSetupResult,
+} from "@/components/decide/plan-setup-sheet"
 import { WarningIcon } from "@/components/ghella/icons"
 import { CropMatches } from "@/components/land/crop-matches"
 import { SectionLabel, ScreenTitle } from "@/components/ghella/primitives"
@@ -31,7 +36,7 @@ import { expand, fadeUp, listStagger } from "@/lib/motion"
 import { cn, fmt, money } from "@/lib/utils"
 import { useApp, type SortKey, type VarietyId } from "@/store/app-store"
 import { selectFocusParcel, useParcels } from "@/store/parcel-store"
-import type { CropMatch, MarketPrice, Parcel } from "@/types/land"
+import type { CropCategory, CropMatch, MarketPrice, Parcel } from "@/types/land"
 
 /**
  * Each demo variety's crop in the EcoCrop table, so a variety card can carry
@@ -93,6 +98,7 @@ function VarietyCard({
   areaHa = null,
   parcel = null,
   local = null,
+  onPlan,
 }: {
   id: VarietyId
   v: Variety
@@ -106,19 +112,20 @@ function VarietyCard({
   parcel?: Parcel | null
   /** Field-country currency, for freezing a real plan's money display. */
   local?: LocalCurrency | null
+  /** Hands the frozen draft up to the screen's shared setup sheet. */
+  onPlan: (draft: PlanDraft, cropName: string, category: CropCategory | null) => void
 }) {
   const { t, lang, pick } = useT()
   const open = useApp((s) => s.open) === id
   const toggle = useApp((s) => s.toggleVariety)
   const commit = useApp((s) => s.commitVariety)
-  const planCropAction = useApp((s) => s.planCrop)
-  const setPlannedVariety = useParcels((s) => s.setPlannedVariety)
   const budBand = useApp((s) => s.bud)
 
   /**
-   * One button, the right plan either way: with a real parcel the variety is
-   * planned exactly like a shortlist crop (frozen snapshot, generic calendar);
-   * without one the scripted demo commit keeps the prototype narrative.
+   * One button, the right plan either way: with a real parcel the variety
+   * stashes a frozen snapshot and opens the screen's setup sheet, exactly
+   * like a shortlist crop; without one the scripted demo commit stays
+   * INSTANT — the demo has no real dates to ask about.
    */
   const planHarvest = () => {
     if (!parcel || !local) {
@@ -138,7 +145,7 @@ function VarietyCard({
       : (envelope?.refPriceUsdPerKg ?? 0)
     const revenue = v.yieldTHa * 1000 * area * usedPrice
     const cost = (SEASON_BUDGET[id][1] / DEMO_AREA_HA) * area
-    planCropAction(
+    onPlan(
       {
         cropId,
         name: v.name,
@@ -156,13 +163,9 @@ function VarietyCard({
         fxRate: local.rate,
         parcelName: parcel.name,
       },
-      pick(
-        `Season plan created — ${v.name} to harvest in ~${v.cycle} days`,
-        `Plan de saison créé — ${v.name}, récolte dans ~${v.cycle} jours`,
-        `أُنشئت خطة الموسم — ${v.name}، الحصاد بعد ~${v.cycle} يومًا`
-      )
+      v.name,
+      envelope?.category ?? null
     )
-    setPlannedVariety(parcel.id, cropId)
   }
 
   // Live economics need BOTH a price series and a real area; with either one
@@ -395,6 +398,16 @@ export function DecideScreen() {
   const sort = useApp((s) => s.sort)
   const set = useApp((s) => s.set)
   const budBand = useApp((s) => s.bud)
+  const planCrop = useApp((s) => s.planCrop)
+  const setPlannedVariety = useParcels((s) => s.setPlannedVariety)
+
+  // The variety draft waiting on the setup sheet's three answers. One sheet
+  // for the whole screen — the shortlist branch carries its own instance.
+  const [pending, setPending] = useState<{
+    draft: PlanDraft
+    cropName: string
+    category: CropCategory | null
+  } | null>(null)
 
   // The parcel this screen decides FOR. Everything real hangs off its
   // analysis; without one (prototype deep links, analysis still running) the
@@ -436,6 +449,24 @@ export function DecideScreen() {
 
   const labels = sortLabels(lang)
   const order = SORT_ORDERS[sort]
+
+  /** The sheet's answers complete the stashed draft into a committed plan. */
+  const createPlan = (setup: PlanSetupResult) => {
+    if (!pending || !parcel) return
+    const { draft } = pending
+    planCrop(
+      { ...draft, ...setup },
+      pick(
+        `Season plan created — ${draft.name} to harvest in ~${draft.cycleDays} days`,
+        `Plan de saison créé — ${draft.name}, récolte dans ~${draft.cycleDays} jours`,
+        `أُنشئت خطة الموسم — ${draft.name}، الحصاد بعد ~${draft.cycleDays} يومًا`
+      )
+    )
+    // Rotation and recommendations read the committed crop off the parcel
+    // itself, not the calendar's snapshot.
+    setPlannedVariety(parcel.id, draft.cropId)
+    setPending(null)
+  }
 
   const title =
     parcel && hasReal
@@ -541,6 +572,9 @@ export function DecideScreen() {
               areaHa={parcel && analysis ? parcel.areaHa : null}
               parcel={analysis ? parcel : null}
               local={local}
+              onPlan={(draft, cropName, category) =>
+                setPending({ draft, cropName, category })
+              }
             />
           ))}
         </motion.div>
@@ -553,6 +587,15 @@ export function DecideScreen() {
       )}
 
       <div className="px-0.5 pb-1.5 text-[11.5px] leading-[1.5] text-muted">{t.decFoot}</div>
+
+      <PlanSetupSheet
+        open={pending != null}
+        cropName={pending?.cropName ?? ""}
+        category={pending?.category ?? null}
+        cycleDays={pending?.draft.cycleDays ?? null}
+        onClose={() => setPending(null)}
+        onCreate={createPlan}
+      />
     </div>
   )
 }

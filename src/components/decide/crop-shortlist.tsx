@@ -18,15 +18,23 @@
  * definition, pixel-identical by construction rather than by discipline.
  *
  * Every card carries a "Plan the harvest" button that snapshots the figures
- * the card is showing into a `PlannedCropPlan` — the calendar then renders a
- * real crop-specific season from that frozen picture. The demo variety flow
- * (commitVariety on the scripted decide cards) is untouched and separate.
+ * the card is showing into a plan draft and opens the shared setup sheet
+ * (soil prepared? which steps? start date?) — the answers complete the
+ * `PlannedCropPlan` and the calendar renders a real crop-specific season
+ * from that frozen picture. One sheet instance lives at the shortlist level,
+ * not per card. The demo variety flow (commitVariety on the scripted decide
+ * cards) is untouched and separate.
  */
 
 import { AnimatePresence, motion } from "framer-motion"
 import { useMemo, useState } from "react"
 import type { JSX } from "react"
 
+import {
+  PlanSetupSheet,
+  type PlanDraft,
+  type PlanSetupResult,
+} from "@/components/decide/plan-setup-sheet"
 import { WarningIcon } from "@/components/ghella/icons"
 import { SectionLabel } from "@/components/ghella/primitives"
 import { Badge } from "@/components/ui/badge"
@@ -41,7 +49,13 @@ import { expand, fadeUp, listStagger } from "@/lib/motion"
 import { cn, fmt } from "@/lib/utils"
 import { useApp, type SortKey } from "@/store/app-store"
 import { useParcels } from "@/store/parcel-store"
-import type { CropMatch, CropRating, MarketPrice, Parcel } from "@/types/land"
+import type {
+  CropCategory,
+  CropMatch,
+  CropRating,
+  MarketPrice,
+  Parcel,
+} from "@/types/land"
 
 /* ── Shared card furniture (extracted from decide-screen) ────── */
 
@@ -238,6 +252,7 @@ function ShortlistCard({
   local,
   open,
   onToggle,
+  onPlan,
 }: {
   row: ShortlistRow
   parcel: Parcel
@@ -245,10 +260,10 @@ function ShortlistCard({
   local: LocalCurrency
   open: boolean
   onToggle: () => void
+  /** Hands the frozen draft up to the shortlist's shared setup sheet. */
+  onPlan: (draft: PlanDraft, cropName: string, category: CropCategory | null) => void
 }) {
   const { t, lang, pick } = useT()
-  const planCrop = useApp((s) => s.planCrop)
-  const setPlannedVariety = useParcels((s) => s.setPlannedVariety)
   const budBand = useApp((s) => s.bud)
 
   const { crop, econ } = row
@@ -312,10 +327,12 @@ function ShortlistCard({
   /**
    * Snapshot the EXACT figures this card is showing — the calendar must
    * render the numbers the farmer said yes to, never a later price refresh.
-   * Shared by the always-visible collapsed action and the expanded panel.
+   * Nothing commits yet: the draft goes up to the shortlist's setup sheet,
+   * which asks about soil and start date before creating the plan. Shared by
+   * the always-visible collapsed action and the expanded panel.
    */
   const planThisCrop = () => {
-    planCrop(
+    onPlan(
       {
         cropId: crop.id,
         name: crop.name,
@@ -330,15 +347,9 @@ function ShortlistCard({
         fxRate: local.rate,
         parcelName: parcel.name,
       },
-      pick(
-        `Season plan created — ${crop.name} to harvest in ~${crop.cycleDays} days`,
-        `Plan de saison créé — ${crop.name}, récolte dans ~${crop.cycleDays} jours`,
-        `أُنشئت خطة الموسم — ${crop.name}، الحصاد بعد ~${crop.cycleDays} يومًا`
-      )
+      crop.name,
+      crop.category
     )
-    // Rotation and recommendations read the committed crop off the parcel
-    // itself, not the calendar's snapshot.
-    setPlannedVariety(parcel.id, crop.id)
   }
 
 
@@ -511,9 +522,21 @@ export function CropShortlist({
   prices: Record<string, MarketPrice | null>
   sort: SortKey
 }): JSX.Element {
+  const { pick } = useT()
+  const planCrop = useApp((s) => s.planCrop)
+  const setPlannedVariety = useParcels((s) => s.setPlannedVariety)
+
   // One open at a time, like every accordion in the app — the open body is
   // the whole story and two of them open is a wall.
   const [openId, setOpenId] = useState<string | null>(null)
+
+  // The draft a card stashed while the setup sheet asks its three questions.
+  // One sheet for the whole list — a sheet per card would mount eight.
+  const [pending, setPending] = useState<{
+    draft: PlanDraft
+    cropName: string
+    category: CropCategory | null
+  } | null>(null)
 
   // Every card shows money in the FIELD's currency — the parcel's country,
   // not the reader's locale, decides what a harvest actually sells in.
@@ -525,29 +548,61 @@ export function CropShortlist({
   )
   const sorted = useMemo(() => sortRows(rows, sort), [rows, sort])
 
+  /** The sheet's answers complete the stashed draft into a committed plan. */
+  const createPlan = (setup: PlanSetupResult) => {
+    if (!pending) return
+    const { draft } = pending
+    planCrop(
+      { ...draft, ...setup },
+      pick(
+        `Season plan created — ${draft.name} to harvest in ~${draft.cycleDays} days`,
+        `Plan de saison créé — ${draft.name}, récolte dans ~${draft.cycleDays} jours`,
+        `أُنشئت خطة الموسم — ${draft.name}، الحصاد بعد ~${draft.cycleDays} يومًا`
+      )
+    )
+    // Rotation and recommendations read the committed crop off the parcel
+    // itself, not the calendar's snapshot.
+    setPlannedVariety(parcel.id, draft.cropId)
+    setPending(null)
+  }
+
   return (
-    // Keyed on the sort so a chip tap re-runs the entrance stagger, exactly
-    // as the demo list behaves. openId lives above the key, so the open card
-    // stays open across re-sorts.
-    <motion.div
-      key={sort}
-      variants={listStagger}
-      initial="hidden"
-      animate="show"
-      className="flex flex-col gap-[11px]"
-    >
-      {sorted.map((row) => (
-        <ShortlistCard
-          key={row.crop.id}
-          row={row}
-          parcel={parcel}
-          local={local}
-          open={openId === row.crop.id}
-          onToggle={() =>
-            setOpenId((cur) => (cur === row.crop.id ? null : row.crop.id))
-          }
-        />
-      ))}
-    </motion.div>
+    <>
+      {/* Keyed on the sort so a chip tap re-runs the entrance stagger,
+          exactly as the demo list behaves. openId lives above the key, so
+          the open card stays open across re-sorts. */}
+      <motion.div
+        key={sort}
+        variants={listStagger}
+        initial="hidden"
+        animate="show"
+        className="flex flex-col gap-[11px]"
+      >
+        {sorted.map((row) => (
+          <ShortlistCard
+            key={row.crop.id}
+            row={row}
+            parcel={parcel}
+            local={local}
+            open={openId === row.crop.id}
+            onToggle={() =>
+              setOpenId((cur) => (cur === row.crop.id ? null : row.crop.id))
+            }
+            onPlan={(draft, cropName, category) =>
+              setPending({ draft, cropName, category })
+            }
+          />
+        ))}
+      </motion.div>
+
+      <PlanSetupSheet
+        open={pending != null}
+        cropName={pending?.cropName ?? ""}
+        category={pending?.category ?? null}
+        cycleDays={pending?.draft.cycleDays ?? null}
+        onClose={() => setPending(null)}
+        onCreate={createPlan}
+      />
+    </>
   )
 }

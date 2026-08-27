@@ -19,6 +19,9 @@ export type CalView = "plan" | "today" | "month" | "year"
  * frozen picture — economics do not silently drift when a price refreshes.
  * Coexists with the demo `planned` variety; setting one clears the other.
  */
+/** One soil-preparation work item the farmer may already have done. */
+export type PrepStepId = "plough" | "manure" | "fertiliser" | "beds" | "irrigation"
+
 export interface PlannedCropPlan {
   cropId: string
   name: string
@@ -34,6 +37,12 @@ export interface PlannedCropPlan {
   currency: string
   fxRate: number
   parcelName: string
+  /** The day the farmer said work begins, ISO date — day 1 of the plan. */
+  startIso: string
+  /** Whether the soil was already prepared when the plan was made. */
+  soilPrepared: boolean
+  /** Which preparation steps are already done (only meaningful when prepared). */
+  prepDone: PrepStepId[]
 }
 export type VarietyId = "rg" | "bk" | "gr" | "mz" | "fz"
 export type CropId = "tom" | "pep" | "oni" | "mel"
@@ -272,7 +281,8 @@ export const useApp = create<AppState & AppActions>((set, get) => ({
       planned: null,
       screen: "cal",
       calView: "plan",
-      seasonStartIso: new Date().toISOString().slice(0, 10),
+      // The farmer's own start date anchors the whole schedule.
+      seasonStartIso: plan.startIso,
     })
   },
   toggleVariety: (id) => set((s) => ({ open: s.open === id ? "" : id })),

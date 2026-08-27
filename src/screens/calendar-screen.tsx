@@ -269,7 +269,7 @@ function EmptyState() {
 /* ── Views ──────────────────────────────────────────────────── */
 
 function TodayView() {
-  const { todayTasks } = useCalendarData()
+  const { todayTasks, todayNote } = useCalendarData()
   return (
     <motion.div
       variants={listStagger}
@@ -277,6 +277,16 @@ function TodayView() {
       animate="show"
       className="flex flex-col gap-[9px]"
     >
+      {/* A generic plan that starts in the future has no work today — the
+          feed says when the season begins instead of listing early tasks. */}
+      {todayNote && (
+        <motion.div
+          variants={fadeUp}
+          className="rounded-xl border border-line bg-card px-[13px] py-[11px] text-[12px] leading-[1.5] text-muted-2"
+        >
+          {todayNote}
+        </motion.div>
+      )}
       {todayTasks.map((task) => (
         <TaskCard key={task.id} task={task} />
       ))}
@@ -479,12 +489,11 @@ function PlanView() {
   // view must read as the data changing, never the UI.
   const phases = useMemo(() => {
     if (!plannedCrop) return PHASES
-    // The hook's seasonStart sits two days BEFORE the commit day (its
-    // "day 1"); the generator anchors its phase maths on the commit day.
-    const commitDay = new Date(seasonStart)
-    commitDay.setDate(commitDay.getDate() + 2)
+    // With a generic plan the hook's seasonStart IS the farmer's chosen
+    // start date — day 1 of the generator's maths, passed through unshifted
+    // so no phase can ever open before the day they said work begins.
     const locale = localeOf(lang)
-    return genericPhases(plannedCrop, commitDay, t, planMoney(plannedCrop, locale), locale)
+    return genericPhases(plannedCrop, seasonStart, t, planMoney(plannedCrop, locale), locale)
   }, [plannedCrop, seasonStart, t, lang])
 
   return (
