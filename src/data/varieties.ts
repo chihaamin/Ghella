@@ -26,6 +26,8 @@ export interface Variety {
   warnLvl?: "amber" | "red"
   /** Season water demand, m³. */
   water: number
+  /** Indicative marketable yield, t/ha — consistent with the demo economics. */
+  yieldTHa: number
   bars: ScoreBar[]
 }
 
@@ -43,6 +45,7 @@ export const VARIETIES: Record<VarietyId, Variety> = {
     cycle: 110,
     badges: ["V", "F1-2", "N"],
     water: 3360,
+    yieldTHa: 42,
     bars: [
       { k: "Soil match", n: 92, note: "Sandy loam is ideal for paste tomato — deep, drains well." },
       { k: "Temperature", n: 88, note: "Sept transplant hits its 22–28°C sweet spot." },
@@ -62,6 +65,7 @@ export const VARIETIES: Record<VarietyId, Variety> = {
     warn: "Frost-sensitive if transplanted after Sept 20.",
     warnLvl: "amber",
     water: 2880,
+    yieldTHa: 26,
     bars: [
       { k: "Soil match", n: 85, note: "Good drainage suits bell pepper." },
       { k: "Temperature", n: 90, note: "Loves the heat through October." },
@@ -79,6 +83,7 @@ export const VARIETIES: Record<VarietyId, Variety> = {
     cycle: 130,
     badges: ["PR"],
     water: 1980,
+    yieldTHa: 38,
     bars: [
       { k: "Soil match", n: 88, note: "Loose topsoil = clean bulbs." },
       { k: "Temperature", n: 84, note: "Mild winter fits short-day onion." },
@@ -98,6 +103,7 @@ export const VARIETIES: Record<VarietyId, Variety> = {
     warn: "Rotation conflict: cucurbits grew here last season.",
     warnLvl: "red",
     water: 2400,
+    yieldTHa: 32,
     bars: [
       { k: "Soil match", n: 78, note: "Acceptable, prefers lighter sand." },
       { k: "Temperature", n: 70, note: "Late-window heat risk at set." },
@@ -117,6 +123,7 @@ export const VARIETIES: Record<VarietyId, Variety> = {
     warn: "Needs 5,460 m³ — 30% more water than your stated capacity.",
     warnLvl: "red",
     water: 5460,
+    yieldTHa: 49,
     bars: [
       { k: "Soil match", n: 86, note: "Fine for fresh-market hybrid." },
       { k: "Temperature", n: 85, note: "OK with shade net through Sept." },

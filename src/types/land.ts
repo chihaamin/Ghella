@@ -243,6 +243,28 @@ export interface CropMatch {
   blockers: string[]
 }
 
+/* ── Market prices ───────────────────────────────────────────── */
+
+/**
+ * One observed market price for a crop in a country, from the FAO GIEWS FPMA
+ * price monitor. Retail/wholesale in a named market — NOT farm-gate; the UI
+ * must say so.
+ */
+export interface MarketPrice {
+  usdPerKg: number
+  /** The price as published, in `currency` per kg. */
+  localPerKg: number
+  currency: string
+  /** The market the series is observed in, e.g. "Tunis". */
+  market: string
+  priceType: "retail" | "wholesale"
+  /** ISO month of the observation, e.g. "2026-01". */
+  month: string
+  seriesUuid: string
+  /** Short attribution, e.g. "FAO FPMA". */
+  source: string
+}
+
 /* ── Water ───────────────────────────────────────────────────── */
 
 export interface WaterBudget {

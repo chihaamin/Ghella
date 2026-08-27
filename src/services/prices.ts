@@ -1,0 +1,337 @@
+/**
+ * Live market prices from the FAO GIEWS FPMA price monitor.
+ *
+ * FPMA publishes retail/wholesale price series observed in named markets —
+ * NOT farm-gate prices — for the countries where food-price monitoring
+ * matters. Coverage is deliberately lopsided: Tunisia has tomatoes in Tunis,
+ * the USA has almost nothing. That asymmetry is expected, so absence is a
+ * normal answer here, not a failure: this module resolves `null` for every
+ * problem — unknown country, unmatched crop, dead network, even an abort —
+ * because a price is decoration on a variety card, never a dependency. The
+ * caller guards its own staleness; nothing downstream should ever have to
+ * catch.
+ */
+
+import { iso3Of } from "@/data/iso3"
+import type { MarketPrice } from "@/types/land"
+
+import { cacheKey, cached, getJson, rateLimiter } from "./http"
+import type { FetchOptions } from "./http"
+
+/* ── Tuning ──────────────────────────────────────────────────── */
+
+// The /giews/v4/price_module/... path 307-redirects to /global/; going there
+// directly saves a round trip on connections that can least afford one.
+const BASE = "https://fpma.fao.org/giews/v4/global/price_module/api/v1"
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** A country's catalogue of series changes rarely — new markets, not new prices. */
+const SERIES_TTL_MS = 7 * DAY_MS
+
+/** The datapoints gain at most one row a month; a day of staleness is invisible. */
+const PRICE_TTL_MS = DAY_MS
+
+/** FPMA can be slow from far away; the default 10 s cuts it too fine. */
+// FPMA routinely takes 8 s+ for a cold series list when the service is
+// degraded (measured live); a clipped fetch costs the farmer the price for a
+// day of cache, so give it room. Prices are decoration — nothing blocks on it.
+const PRICE_TIMEOUT_MS = 25_000
+
+/** A country list can paginate; past 3 pages we have more series than we need. */
+const MAX_SERIES_PAGES = 3
+
+/** A series whose newest period ended over 24 months ago is history, not a price. */
+const MAX_SERIES_AGE_MONTHS = 24
+
+/** Newest-first datapoints to scan before conceding the series has no usable price. */
+const MAX_DATAPOINT_SCAN = 12
+
+/** Sanity ceiling — no staple crop retails at $50/kg; past it the unit mapping is wrong. */
+const MAX_PLAUSIBLE_USD_PER_KG = 50
+
+/**
+ * One limiter across BOTH endpoints, so a Decide screen asking about four
+ * crops at once turns into a polite drip instead of a burst FPMA might
+ * throttle. 600 ms is invisible behind the cards' loading states.
+ */
+const politely = rateLimiter(600)
+
+/* ── Crop → commodity matching ───────────────────────────────── */
+
+/**
+ * How one of our crop ids finds its FPMA series.
+ *
+ * `match` casts the net, `exclude` is a hard veto (melon must never pick up
+ * "Watermelons"), and `avoid` is only a preference: wheat GRAIN beats wheat
+ * FLOUR, but flour still beats showing nothing when it is the only series a
+ * country publishes.
+ */
+interface CommodityRule {
+  match: RegExp
+  exclude?: RegExp
+  avoid?: RegExp
+}
+
+// Both wheats and all three beans funnel to the same series — FPMA tracks the
+// commodity, not the cultivar, so sharing one rule keeps them in lockstep.
+const WHEAT_RULE: CommodityRule = { match: /wheat/i, avoid: /flour/i }
+const BEAN_RULE: CommodityRule = { match: /bean|niébé|cowpea/i }
+
+/** cropId (as `data/ecocrop` spells them) → how to find it in a commodity_name. */
+const CROP_COMMODITY: Record<string, CommodityRule> = {
+  tomato: { match: /tomato/i },
+  "sweet-pepper": { match: /pepper|chilli|capsicum/i },
+  onion: { match: /onion|shallot/i },
+  melon: { match: /melon/i, exclude: /water\s*melon/i },
+  watermelon: { match: /water\s*melon/i },
+  potato: { match: /^potato|irish potato/i, exclude: /sweet/i },
+  "sweet-potato": { match: /sweet\s*potato/i },
+  "durum-wheat": WHEAT_RULE,
+  "bread-wheat": WHEAT_RULE,
+  barley: { match: /barley/i },
+  maize: { match: /maize|corn/i, avoid: /flour|meal/i },
+  rice: { match: /rice/i },
+  chickpea: { match: /chickpea/i },
+  lentil: { match: /lentil/i },
+  "faba-bean": BEAN_RULE,
+  "green-bean": BEAN_RULE,
+  cowpea: BEAN_RULE,
+  sorghum: { match: /sorghum/i },
+  "pearl-millet": { match: /millet/i },
+  groundnut: { match: /groundnut|peanut/i },
+  "date-palm": { match: /date/i },
+  "sugar-beet": { match: /sugar/i },
+}
+
+/** The crop ids a price can even be asked for — the UI hides the feature elsewhere. */
+export const PRICEABLE_CROPS: string[] = Object.keys(CROP_COMMODITY)
+
+/* ── Units ───────────────────────────────────────────────────── */
+
+/**
+ * measure_unit_label → kilograms per unit. Everything the app shows is per kg,
+ * so a series sold in an unlisted unit ("Loaf", "Litre", "Bunch") is skipped
+ * outright — a wrong division here would put a confidently wrong price on a
+ * card, which is worse than no price.
+ */
+const KG_PER_UNIT: Record<string, number> = {
+  kg: 1,
+  "100 kg": 100,
+  "50 kg": 50,
+  tonne: 1000,
+  mt: 1000,
+  cwt: 50.8,
+}
+
+function kgFactorOf(label: unknown): number | null {
+  if (typeof label !== "string") return null
+  return KG_PER_UNIT[label.trim().toLowerCase()] ?? null
+}
+
+/* ── FPMA response shapes (only the fields read) ─────────────── */
+
+interface FpmaSeries {
+  uuid?: string
+  commodity_name?: string
+  market_name?: string
+  price_type?: string
+  currency?: string
+  measure_unit_label?: string
+  periodicity?: { period?: string; start_date?: string; end_date?: string }[]
+}
+
+interface FpmaSeriesPage {
+  next?: string | null
+  results?: FpmaSeries[]
+}
+
+interface FpmaDatapoint {
+  date?: string
+  price_value?: number | null
+  price_value_dollar?: number | null
+}
+
+interface FpmaPriceResponse {
+  uuid?: string
+  datapoints?: FpmaDatapoint[]
+}
+
+/* ── Fetching ────────────────────────────────────────────────── */
+
+/**
+ * Every FPMA series a country publishes, all pages folded together and cached
+ * a week per country — the catalogue is the expensive call, and it is the same
+ * for every crop the screen asks about.
+ */
+async function fetchSeriesList(iso3: string, options?: FetchOptions): Promise<FpmaSeries[]> {
+  return cached(cacheKey("fpma-series", iso3), SERIES_TTL_MS, async () => {
+    const all: FpmaSeries[] = []
+    let url: string | null = `${BASE}/FpmaSerieDomestic/?iso3_country_code=${iso3}&format=json`
+    for (let page = 0; page < MAX_SERIES_PAGES && url; page += 1) {
+      // Snapshot before the closure, with explicit types: `url` is reassigned
+      // below from `raw`, whose inference flows through a closure capturing
+      // this very snapshot — without annotations TS calls that a cycle.
+      const pageUrl: string = url
+      const raw: FpmaSeriesPage = await politely(
+        () =>
+          getJson<FpmaSeriesPage>(pageUrl, {
+            ...options,
+            timeoutMs: options?.timeoutMs ?? PRICE_TIMEOUT_MS,
+          }),
+        options?.signal
+      )
+      if (Array.isArray(raw.results)) all.push(...raw.results)
+      // The API hands back an absolute URL for the next page, or null at the end.
+      url = typeof raw.next === "string" && raw.next.length > 0 ? raw.next : null
+    }
+    return all
+  })
+}
+
+/** A matched series with everything already validated for building a MarketPrice. */
+interface Candidate {
+  uuid: string
+  market: string
+  currency: string
+  priceType: "retail" | "wholesale"
+  kgFactor: number
+  /** Epoch ms of the series' newest period end — the freshness tiebreaker. */
+  endMs: number
+  /** Matched the rule's `avoid` — usable, but only when nothing better exists. */
+  avoided: boolean
+}
+
+/**
+ * Pick the one series worth fetching datapoints for, or null.
+ *
+ * Order of preference: WHOLESALE over RETAIL (closer to what a farmer is
+ * actually paid), then the most recently updated, then first-listed. Hard
+ * gates come first — unknown unit, stale series, or missing fields disqualify
+ * a series entirely rather than degrade the answer.
+ */
+function pickSeries(list: FpmaSeries[], rule: CommodityRule): Candidate | null {
+  const staleBefore = new Date()
+  staleBefore.setMonth(staleBefore.getMonth() - MAX_SERIES_AGE_MONTHS)
+
+  const candidates: Candidate[] = []
+  for (const series of list) {
+    const name = series.commodity_name
+    if (typeof name !== "string" || !rule.match.test(name)) continue
+    if (rule.exclude && rule.exclude.test(name)) continue
+
+    // Everything MarketPrice will need must actually be there.
+    if (typeof series.uuid !== "string" || series.uuid.length === 0) continue
+    if (typeof series.market_name !== "string") continue
+    if (typeof series.currency !== "string") continue
+    const priceType = series.price_type?.toLowerCase()
+    if (priceType !== "retail" && priceType !== "wholesale") continue
+
+    const kgFactor = kgFactorOf(series.measure_unit_label)
+    if (kgFactor === null) continue
+
+    // No parseable end date counts as stale: freshness we cannot prove is
+    // freshness we do not have.
+    const endMs = Date.parse(series.periodicity?.[0]?.end_date ?? "")
+    if (!Number.isFinite(endMs) || endMs < staleBefore.getTime()) continue
+
+    candidates.push({
+      uuid: series.uuid,
+      market: series.market_name,
+      currency: series.currency,
+      priceType,
+      kgFactor,
+      endMs,
+      avoided: rule.avoid ? rule.avoid.test(name) : false,
+    })
+  }
+
+  // The `avoid` preference: drop the flour-type series only when grain exists.
+  const pool = candidates.some((c) => !c.avoided)
+    ? candidates.filter((c) => !c.avoided)
+    : candidates
+
+  // Array.prototype.sort is stable (ES2019+), so ties keep the API's order.
+  pool.sort((a, b) => {
+    if (a.priceType !== b.priceType) return a.priceType === "wholesale" ? -1 : 1
+    return b.endMs - a.endMs
+  })
+  return pool[0] ?? null
+}
+
+/**
+ * The newest usable observation from a chosen series, or null.
+ *
+ * Newest first, at most `MAX_DATAPOINT_SCAN` deep: old rows have no USD
+ * conversion and any row can be junk, so each is gated on both prices being
+ * finite and the USD figure landing in a plausible per-kg band before it is
+ * allowed onto a card.
+ */
+async function fetchLatestPrice(
+  chosen: Candidate,
+  options?: FetchOptions
+): Promise<MarketPrice | null> {
+  const raw = await cached(cacheKey("fpma-price", chosen.uuid), PRICE_TTL_MS, () =>
+    politely(
+      () =>
+        getJson<FpmaPriceResponse>(`${BASE}/FpmaSeriePrice/${chosen.uuid}/?format=json`, {
+          ...options,
+          timeoutMs: options?.timeoutMs ?? PRICE_TIMEOUT_MS,
+        }),
+      options?.signal
+    )
+  )
+
+  const points = Array.isArray(raw.datapoints) ? raw.datapoints : []
+  for (const point of points.slice(0, MAX_DATAPOINT_SCAN)) {
+    const usd = point.price_value_dollar
+    const local = point.price_value
+    if (typeof usd !== "number" || !Number.isFinite(usd) || usd <= 0) continue
+    if (typeof local !== "number" || !Number.isFinite(local)) continue
+    if (typeof point.date !== "string" || point.date.length < 7) continue
+
+    const usdPerKg = usd / chosen.kgFactor
+    if (usdPerKg <= 0 || usdPerKg > MAX_PLAUSIBLE_USD_PER_KG) continue
+
+    return {
+      usdPerKg,
+      localPerKg: local / chosen.kgFactor,
+      currency: chosen.currency,
+      market: chosen.market,
+      priceType: chosen.priceType,
+      month: point.date.slice(0, 7),
+      seriesUuid: chosen.uuid,
+      source: "FAO FPMA",
+    }
+  }
+  return null
+}
+
+/**
+ * The freshest observed market price for a crop in a country, or null.
+ *
+ * `countryCode` is ISO-2 as `Place.countryCode` carries it. Null means "no
+ * price to show" for ANY reason — country not covered, crop not tracked,
+ * series stale, network dead, request aborted — and that is deliberate:
+ * unlike the rest of the services this one never throws, not even an abort,
+ * because the consuming hook treats null as absence and guards staleness
+ * itself. A crash path from a decorative number is a bug by definition.
+ */
+export async function fetchMarketPrice(
+  countryCode: string,
+  cropId: string,
+  options?: FetchOptions
+): Promise<MarketPrice | null> {
+  try {
+    const iso3 = iso3Of(countryCode)
+    if (!iso3) return null
+    const rule = CROP_COMMODITY[cropId]
+    if (!rule) return null
+
+    const chosen = pickSeries(await fetchSeriesList(iso3, options), rule)
+    if (!chosen) return null
+    return await fetchLatestPrice(chosen, options)
+  } catch {
+    return null
+  }
+}

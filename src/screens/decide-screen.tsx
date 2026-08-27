@@ -15,19 +15,21 @@ import {
   sortLabels,
   type Variety,
 } from "@/data/varieties"
+import { useMarketPrices } from "@/hooks/use-market-prices"
+import type { Lang } from "@/i18n/dict"
 import { useT } from "@/i18n/use-t"
 import { applyIrrigation } from "@/lib/crop-suitability"
 import { C } from "@/lib/colors"
 import { expand, fadeUp, listStagger } from "@/lib/motion"
-import { cn, fmt } from "@/lib/utils"
+import { cn, fmt, money } from "@/lib/utils"
 import { useApp, type SortKey, type VarietyId } from "@/store/app-store"
 import { selectFocusParcel, useParcels } from "@/store/parcel-store"
-import type { CropMatch } from "@/types/land"
+import type { CropMatch, MarketPrice } from "@/types/land"
 
 /**
  * Each demo variety's crop in the EcoCrop table, so a variety card can carry
- * the REAL agronomic scores for the selected parcel while keeping the demo
- * price forecast (there is no open wholesale-price API to replace it with).
+ * the REAL agronomic scores for the selected parcel — and, where FAO FPMA
+ * publishes a series for the parcel's country, a live market price too.
  */
 const VARIETY_CROP: Record<VarietyId, string> = {
   rg: "tomato",
@@ -35,6 +37,49 @@ const VARIETY_CROP: Record<VarietyId, string> = {
   bk: "sweet-pepper",
   gr: "onion",
   mz: "melon",
+}
+
+/** The distinct crops on the shortlist — one FPMA lookup per crop, not per card. */
+const PRICEABLE = [...new Set(Object.values(VARIETY_CROP))]
+
+/**
+ * The area every demo figure is written for. SEASON_BUDGET dollars and the
+ * variety water volumes are all "per 0.8 ha", so live economics must divide
+ * by this before scaling to a real parcel's area.
+ */
+const DEMO_AREA_HA = 0.8
+
+/** "2026-01" → "Jan 2026" in the reader's language. Noon keeps the label on the first of the month in every timezone. */
+function priceMonth(month: string, lang: Lang): string {
+  return new Date(`${month}-01T12:00:00`).toLocaleDateString(
+    lang === "fr" ? "fr" : lang === "ar" ? "ar" : "en",
+    { month: "short", year: "numeric" }
+  )
+}
+
+/**
+ * Honest card economics from a live FPMA price and the parcel's true area:
+ * indicative yield × observed price, against the demo input costs rescaled
+ * from their 0.8 ha basis. `wps` is the water-profit the drop displays — a
+ * loss clamps to 0 because the drop only draws 0..12.
+ */
+function liveEconomics(
+  id: VarietyId,
+  v: Variety,
+  price: MarketPrice,
+  areaHa: number
+): { net: number; cost: number; wps: number } {
+  const yieldKg = v.yieldTHa * 1000 * areaHa
+  const revenue = yieldKg * price.usdPerKg
+  // Demo costs are stated for the 0.8 ha demo parcel — per-ha first, then scale.
+  const costPerHa = SEASON_BUDGET[id][1] / DEMO_AREA_HA
+  const cost = costPerHa * areaHa
+  const net = revenue - cost
+  // The demo water figures are m³ per 0.8 ha too; same rescale, and a guard
+  // so a degenerate zero-water row can never divide the score to Infinity.
+  const waterM3 = (v.water / DEMO_AREA_HA) * areaHa
+  const wps = waterM3 > 0 ? Math.max(0, net / waterM3) : 0
+  return { net, cost, wps }
 }
 
 /** Water-profit score, drawn as a drop filling from the bottom. */
@@ -99,11 +144,17 @@ function VarietyCard({
   id,
   v,
   real,
+  price = null,
+  areaHa = null,
 }: {
   id: VarietyId
   v: Variety
   /** The REAL match for this variety's crop on the selected parcel, when one exists. */
   real?: CropMatch
+  /** Live FPMA price for this variety's crop, when the country has a series. */
+  price?: MarketPrice | null
+  /** The selected parcel's true area, ha — the demo economics assume 0.8 ha. */
+  areaHa?: number | null
 }) {
   const { t, lang, pick } = useT()
   const open = useApp((s) => s.open) === id
@@ -111,7 +162,35 @@ function VarietyCard({
   const commit = useApp((s) => s.commitVariety)
   const budBand = useApp((s) => s.bud)
 
-  const inputCost = SEASON_BUDGET[id][1]
+  // Live economics need BOTH a price series and a real area; with either one
+  // missing the card renders the scripted demo figures untouched.
+  const econ =
+    price != null && areaHa != null && areaHa > 0
+      ? { price, areaHa, ...liveEconomics(id, v, price, areaHa) }
+      : null
+
+  // The U+2212 minus keeps a loss in the same type run as a gain: "−$1,234".
+  const profitTxt = econ
+    ? econ.net < 0
+      ? `−${money(-econ.net)}`
+      : money(econ.net)
+    : v.profit
+  const areaTxt = econ ? econ.areaHa.toFixed(1) : ""
+  const netCaption = econ
+    ? pick(
+        `net · your ${areaTxt} ha`,
+        `net · vos ${areaTxt.replace(".", ",")} ha`,
+        `صافي · ${areaTxt} هك`
+      )
+    : t.decNet
+  const forecastTxt = econ
+    ? `@ $${econ.price.usdPerKg.toFixed(2)}/kg · ${econ.price.market} ` +
+      `${econ.price.priceType}, ${priceMonth(econ.price.month, lang)} · ${econ.price.source}`
+    : v.forecastLine
+  const wpsShown = econ ? econ.wps : v.wps
+
+  // Live costs scale with the real area; the same budget-band cap applies.
+  const inputCost = econ ? econ.cost : SEASON_BUDGET[id][1]
   const band = BUDGET_BANDS[budBand]
   const overBudget = inputCost > band.cap
   const budgetWarn = overBudget
@@ -165,11 +244,11 @@ function VarietyCard({
           </div>
 
           <div className="flex flex-wrap items-baseline gap-1.5">
-            <span className="font-display text-[15px] font-bold">{v.profit}</span>
-            <span className="text-[11.5px] whitespace-nowrap text-muted">{t.decNet}</span>
+            <span className="font-display text-[15px] font-bold">{profitTxt}</span>
+            <span className="text-[11.5px] whitespace-nowrap text-muted">{netCaption}</span>
           </div>
 
-          <div className="text-[11px] text-muted">{v.forecastLine}</div>
+          <div className="text-[11px] text-muted">{forecastTxt}</div>
 
           <div className="flex flex-wrap gap-[5px]">
             <Badge variant={urgent ? "sun" : "water"}>
@@ -190,7 +269,7 @@ function VarietyCard({
           </div>
         </div>
 
-        <ScoreDrop id={id} wps={v.wps} />
+        <ScoreDrop id={id} wps={wpsShown} />
       </button>
 
       {warn && (
@@ -327,6 +406,15 @@ export function DecideScreen() {
   )
   const hasReal = matches.length > 0
 
+  // FPMA prices for the shortlist's crops in the parcel's country. Most
+  // countries have no series for most crops — every miss is a null, and the
+  // cards that miss keep their demo forecast.
+  const countryCode = analysis?.place?.countryCode ?? null
+  const { prices } = useMarketPrices(countryCode, PRICEABLE)
+  const anyPrice = Object.values(prices).some((p) => p != null)
+  // A price only RENDERS live when a real area exists to scale it against.
+  const liveShown = anyPrice && parcel != null && hasReal
+
   const labels = sortLabels(lang)
   const order = SORT_ORDERS[sort]
 
@@ -386,7 +474,11 @@ export function DecideScreen() {
         </div>
       )}
 
-      {hasReal && <SectionLabel className="pt-1">{t.decShortlist}</SectionLabel>}
+      {hasReal && (
+        <SectionLabel className="pt-1">
+          {anyPrice ? t.decShortlistLive : t.decShortlist}
+        </SectionLabel>
+      )}
 
       <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 py-0.5">
         {(Object.keys(SORT_ORDERS) as SortKey[]).map((k) => (
@@ -419,9 +511,17 @@ export function DecideScreen() {
             id={id}
             v={VARIETIES[id]}
             real={matchByCrop.get(VARIETY_CROP[id])}
+            price={prices[VARIETY_CROP[id]] ?? null}
+            areaHa={parcel && hasReal ? parcel.areaHa : null}
           />
         ))}
       </motion.div>
+
+      {/* FPMA observes retail/wholesale in a city market, not the farm gate —
+          the one honesty note the live numbers must carry. */}
+      {liveShown && (
+        <div className="px-0.5 text-[11.5px] leading-[1.5] text-muted">{t.decFarmGate}</div>
+      )}
 
       <div className="px-0.5 pb-1.5 text-[11.5px] leading-[1.5] text-muted">{t.decFoot}</div>
     </div>
