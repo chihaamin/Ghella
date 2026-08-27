@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion"
+import { useEffect, useRef } from "react"
 
 import { AndroidDevice } from "@/components/device/android-device"
 import { useT } from "@/i18n/use-t"
@@ -31,7 +32,13 @@ const SCREENS: Record<Screen, () => React.JSX.Element> = {
 export function PhoneShell() {
   const { dir } = useT()
   const screen = useApp((s) => s.screen)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const Active = SCREENS[screen]
+
+  // A new screen always starts at the top, the way a native push would.
+  useEffect(() => {
+    bodyRef.current?.scrollTo({ top: 0 })
+  }, [screen])
 
   return (
     <AndroidDevice bg="#f7f4ec">
@@ -39,7 +46,7 @@ export function PhoneShell() {
         <OfflineBanner />
         <AppHeader />
 
-        <div className="no-scrollbar flex-1 overflow-auto px-4 pb-24">
+        <div ref={bodyRef} className="no-scrollbar flex-1 overflow-auto px-4 pb-24">
           <AnimatePresence mode="wait">
             <motion.div
               key={screen}
