@@ -26,7 +26,7 @@ const en = {
 
   // ── Onboarding ──────────────────────────────────────────────
   obTitle: "Welcome — draw your land",
-  obSub: "Tap the corners of your field — drag any point to adjust. We detected a likely boundary (dashed) you can adopt.",
+  obSub: "Tap the corners of your field, as many as it takes — drag any point to adjust.",
   obConfirm: "Confirm outline",
   obDetect: "Use detected",
   obHintTap: "Tap corner points on the satellite image",

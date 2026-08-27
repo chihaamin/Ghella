@@ -59,4 +59,3 @@ export const PARCEL_COLORS = [
 
 /** Where the satellite map opens before the device reports a fix. */
 export const MAP_START: [number, number] = [36.7078, -119.685]
-export const MAX_PARCEL_POINTS = 8

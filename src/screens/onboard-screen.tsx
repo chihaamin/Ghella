@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { useEffect, useRef } from "react"
 
 import { DropBadge, PinIcon, WaterDrop } from "@/components/ghella/icons"
-import { ParcelMap, type ParcelMapHandle } from "@/components/ghella/parcel-map"
+import { ParcelMap } from "@/components/ghella/parcel-map"
 import { SectionLabel } from "@/components/ghella/primitives"
 import { Button } from "@/components/ui/button"
 import {
@@ -85,7 +85,6 @@ function StepDraw({ onConfirm }: { onConfirm: (parcelId: string) => void }) {
   const pts = useApp((s) => s.pts)
   const startAnalysis = useApp((s) => s.startAnalysis)
   const addParcel = useParcels((s) => s.addParcel)
-  const mapApi = useRef<ParcelMapHandle>(null)
   const ready = pts.length >= 3
 
   return (
@@ -99,7 +98,7 @@ function StepDraw({ onConfirm }: { onConfirm: (parcelId: string) => void }) {
         <LocatePrompt />
       ) : (
         <>
-          <ParcelMap ref={mapApi} />
+          <ParcelMap />
           <div className="flex gap-2">
             <Button
               variant={ready ? "ink" : "disabled"}
@@ -116,13 +115,6 @@ function StepDraw({ onConfirm }: { onConfirm: (parcelId: string) => void }) {
               }}
             >
               {t.obConfirm}
-            </Button>
-            <Button
-              variant="outline"
-              className="w-auto border-line-dash px-3.5 text-ink-muted"
-              onClick={() => mapApi.current?.useDetected()}
-            >
-              {t.obDetect}
             </Button>
           </div>
         </>

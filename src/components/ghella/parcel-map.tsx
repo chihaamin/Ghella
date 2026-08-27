@@ -1,7 +1,7 @@
 import L from "leaflet"
-import { useEffect, useImperativeHandle, useRef, type Ref } from "react"
+import { useEffect, useRef } from "react"
 
-import { MAP_START, MAX_PARCEL_POINTS } from "@/data/onboarding"
+import { MAP_START } from "@/data/onboarding"
 import { useT } from "@/i18n/use-t"
 import { C } from "@/lib/colors"
 import { useApp, type LatLng } from "@/store/app-store"
@@ -9,39 +9,30 @@ import { useApp, type LatLng } from "@/store/app-store"
 const TILES =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 
-export interface ParcelMapHandle {
-  /** Adopt the dashed boundary the satellite read suggested. */
-  useDetected: () => void
-}
-
 /**
- * Satellite parcel drawing. Tapping the imagery drops a corner; corners are
- * draggable. Points live in a ref while the user is dragging and are pushed to
- * the store on commit, so a 60 fps drag never re-renders the screen.
+ * Satellite parcel drawing. Tapping the imagery drops a corner (as many as the
+ * field needs); corners are draggable. Points live in a ref while the user is
+ * dragging and are pushed to the store on commit, so a 60 fps drag never
+ * re-renders the screen. When the device reports a position it becomes the map
+ * centre — immediately if the fix beat the map, or with one setView when it
+ * arrives late; after that the farmer's panning is never hijacked.
  */
-export function ParcelMap({ ref }: { ref?: Ref<ParcelMapHandle> }) {
+export function ParcelMap() {
   const { t } = useT()
   const setPts = useApp((s) => s.setPts)
   const setState = useApp((s) => s.set)
   const pts = useApp((s) => s.pts)
+  const locatedAt = useApp((s) => s.locatedAt)
   const mapCenterTxt = useApp((s) => s.mapCenterTxt)
 
   const hostRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
   const polyRef = useRef<L.Polygon | null>(null)
   const marksRef = useRef<L.LayerGroup | null>(null)
+  const hereRef = useRef<L.Marker | null>(null)
   const ptsRef = useRef<LatLng[]>([])
-  const suggestRef = useRef<LatLng[]>([])
   const draggingRef = useRef(false)
-
-  useImperativeHandle(ref, () => ({
-    useDetected: () => {
-      if (!mapRef.current) return
-      ptsRef.current = suggestRef.current.slice()
-      redraw()
-      setPts(ptsRef.current.slice())
-    },
-  }))
+  const centeredOnFixRef = useRef(false)
 
   function redraw() {
     const map = mapRef.current
@@ -83,8 +74,12 @@ export function ParcelMap({ ref }: { ref?: Ref<ParcelMapHandle> }) {
     const host = hostRef.current
     if (!host || mapRef.current) return
 
+    // If the geolocation fix already resolved, open straight on it.
+    const start = useApp.getState().locatedAt
+    centeredOnFixRef.current = start !== null
+
     const map = L.map(host, {
-      center: MAP_START,
+      center: start ?? MAP_START,
       zoom: 16,
       zoomControl: false,
       attributionControl: false,
@@ -96,22 +91,6 @@ export function ParcelMap({ ref }: { ref?: Ref<ParcelMapHandle> }) {
       .addAttribution("Esri World Imagery")
       .addTo(map)
 
-    const c = map.getCenter()
-    const d = 0.0011
-    const d2 = 0.0016
-    suggestRef.current = [
-      [c.lat + d, c.lng - d2],
-      [c.lat + d * 0.9, c.lng + d2],
-      [c.lat - d, c.lng + d2 * 0.85],
-      [c.lat - d * 0.8, c.lng - d2],
-    ]
-    L.polygon(suggestRef.current, {
-      color: C.leafLight,
-      weight: 2,
-      dashArray: "6 6",
-      fill: false,
-    }).addTo(map)
-
     polyRef.current = L.polygon([], {
       color: C.leafLight,
       weight: 3,
@@ -121,7 +100,7 @@ export function ParcelMap({ ref }: { ref?: Ref<ParcelMapHandle> }) {
     marksRef.current = L.layerGroup().addTo(map)
 
     map.on("click", (e) => {
-      if (draggingRef.current || ptsRef.current.length >= MAX_PARCEL_POINTS) return
+      if (draggingRef.current) return
       ptsRef.current.push([e.latlng.lat, e.latlng.lng])
       redraw()
       setPts(ptsRef.current.slice())
@@ -145,9 +124,37 @@ export function ParcelMap({ ref }: { ref?: Ref<ParcelMapHandle> }) {
       mapRef.current = null
       polyRef.current = null
       marksRef.current = null
+      hereRef.current = null
       ptsRef.current = []
     }
   }, [setPts, setState])
+
+  // The device fix: recentre once when it arrives, and keep a "you are here"
+  // dot on it so the farmer can find their way back after panning.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !locatedAt) return
+
+    if (!centeredOnFixRef.current) {
+      centeredOnFixRef.current = true
+      map.setView(locatedAt, 16)
+    }
+
+    if (hereRef.current) {
+      hereRef.current.setLatLng(locatedAt)
+    } else {
+      hereRef.current = L.marker(locatedAt, {
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({
+          className: "",
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
+          html: `<div style="width:14px;height:14px;border-radius:50%;background:${C.water};border:3px solid #fff;box-shadow:0 0 0 4px rgba(31,127,184,.25),0 1px 4px rgba(0,0,0,.4)"></div>`,
+        }),
+      }).addTo(map)
+    }
+  }, [locatedAt])
 
   // The screen can clear the outline from outside (Reset, or re-entering onboarding).
   useEffect(() => {
