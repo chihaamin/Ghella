@@ -96,6 +96,12 @@ budget) and ranked recommendations — including equal-area parcel **splits**
 previewed on the map and applied with one tap (`splitPolygon` bisects on
 area along the field's long axis).
 
+## Workflow
+
+A `Stop` hook in `.claude/settings.json` auto-commits and pushes any change
+left in the tree when a Claude Code turn ends, so `origin/main` always holds
+the latest state of the work.
+
 ## Fidelity
 
 `design-src/Ghella Farmer App.dc.html` is the original artboard, kept as the
