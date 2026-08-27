@@ -1,10 +1,19 @@
 /**
- * Live market prices from the FAO GIEWS FPMA price monitor.
+ * Live market prices, routed by the parcel's country.
  *
- * FPMA publishes retail/wholesale price series observed in named markets —
- * NOT farm-gate prices — for the countries where food-price monitoring
- * matters. Coverage is deliberately lopsided: Tunisia has tomatoes in Tunis,
- * the USA has almost nothing. That asymmetry is expected, so absence is a
+ * Two sources, tried in the order that matches their coverage:
+ *
+ *   · EU agri-food data portal — weekly fruit & vegetable prices for the 27
+ *     EU member states, farm-gate and ex-packaging stages included. Tried
+ *     first for EU countries only; everything it cannot answer (cereals,
+ *     legumes, any non-EU parcel) falls through.
+ *   · FAO GIEWS FPMA — retail/wholesale series observed in named markets,
+ *     strong across Africa and the Middle East, nearly absent in Europe.
+ *     The terminal step of the chain for everyone.
+ *
+ * The two are complementary by design: FPMA has Tunis tomatoes but no Spanish
+ * ones, the EU portal is the reverse. An EU member gets both chances; Moldova
+ * or Egypt goes straight to FPMA. Coverage gaps are expected, so absence is a
  * normal answer here, not a failure: this module resolves `null` for every
  * problem — unknown country, unmatched crop, dead network, even an abort —
  * because a price is decoration on a variety card, never a dependency. The
@@ -15,7 +24,8 @@
 import { iso3Of } from "@/data/iso3"
 import type { MarketPrice } from "@/types/land"
 
-import { cacheKey, cached, getJson, rateLimiter } from "./http"
+import { eurToUsd } from "./fx"
+import { cacheKey, cached, getJson, isHttpError, rateLimiter } from "./http"
 import type { FetchOptions } from "./http"
 
 /* ── Tuning ──────────────────────────────────────────────────── */
@@ -104,8 +114,50 @@ const CROP_COMMODITY: Record<string, CommodityRule> = {
   "sugar-beet": { match: /sugar/i },
 }
 
+/* ── EU agri-food portal (fruit & vegetables, EU members only) ── */
+
+/**
+ * The 27 EU member states, ISO-3166-1 alpha-2. Membership decides routing —
+ * the EU portal only answers for members, so asking it about Ukraine or
+ * Morocco would be a guaranteed 404 spent from the rate budget.
+ */
+const EU_MEMBERS = new Set([
+  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
+  "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
+  "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+])
+
+/**
+ * cropId → the portal's product name, exactly as `/pricesSupplyChain/products`
+ * spells it (verified against the live list; lower-cased — the query parameter
+ * is case-insensitive). Only fruit & vegetables exist here: cereals live under
+ * a separate endpoint family this app does not use, so wheat/barley/etc. in
+ * the EU simply fall through to FPMA like everywhere else. Note "cabbage" is
+ * singular in the live list where its neighbours are plural.
+ */
+const EU_PRODUCT: Record<string, string> = {
+  tomato: "tomatoes",
+  "sweet-pepper": "peppers",
+  onion: "onions",
+  melon: "melons",
+  watermelon: "water melons",
+  "green-bean": "beans",
+  cucumber: "cucumbers",
+  courgette: "courgettes",
+  eggplant: "egg plants",
+  garlic: "garlic",
+  carrot: "carrots",
+  cabbage: "cabbage",
+  cauliflower: "cauliflowers",
+  lettuce: "lettuces",
+  citrus: "oranges",
+  strawberry: "strawberries",
+}
+
 /** The crop ids a price can even be asked for — the UI hides the feature elsewhere. */
-export const PRICEABLE_CROPS: string[] = Object.keys(CROP_COMMODITY)
+export const PRICEABLE_CROPS: string[] = Array.from(
+  new Set([...Object.keys(CROP_COMMODITY), ...Object.keys(EU_PRODUCT)])
+)
 
 /* ── Units ───────────────────────────────────────────────────── */
 
@@ -307,15 +359,263 @@ async function fetchLatestPrice(
   return null
 }
 
+/* ── EU agri-food fetching ───────────────────────────────────── */
+
+/**
+ * The portal's real host answers with an EMPTY Access-Control-Allow-Origin
+ * header, so the browser reaches it through this same-origin prefix that the
+ * dev/preview servers (and any production host) rewrite to the real base —
+ * see `vite.config.ts`. Non-browser callers (the self-check scripts) shim
+ * `fetch` to expand the prefix instead.
+ */
+const EU_BASE = "/eu-agrifood/fruitAndVegetable/pricesSupplyChain"
+
+/** Weekly data gains one row a week; a day of staleness is invisible. */
+const EU_TTL_MS = DAY_MS
+
+/** A national weekly price older than ~6 months describes a different season. */
+const EU_MAX_ROW_AGE_MS = 183 * DAY_MS
+
+/**
+ * Its own limiter, not `politely`: the EU portal and FPMA are different hosts
+ * with independent tempers, and chaining them through one queue would make a
+ * Spanish parcel wait behind a Tunisian one for no protective benefit.
+ */
+const euPolitely = rateLimiter(400)
+
+/** Only the fields read; rows also carry period/isRegulated etc. */
+interface EuPriceRow {
+  memberStateName?: string
+  endDate?: string
+  price?: string
+  unit?: string
+  productStage?: string
+  market?: string
+  variety?: string
+}
+
+/** A validated row, everything parsed and ready to be ranked. */
+interface EuCandidate {
+  eurPerKg: number
+  /** 0 farm-gate, 1 ex-packaging, 2 anything else — the preference order. */
+  stageRank: 0 | 1 | 2
+  /** Epoch ms of the observation week's end. */
+  endMs: number
+  /** "YYYY-MM" of the same, precomputed while the date parts are in hand. */
+  month: string
+  nationalAvg: boolean
+  stateName: string
+  /** The row's variety, product prefix stripped — "Cherry/Special", "Round". */
+  variety: string
+  /** True for the portal's whole-product rows ("All types and varieties", weighted averages). */
+  aggregate: boolean
+}
+
+/**
+ * "€188.70" → 188.7. The portal quotes prices as strings with a currency sign
+ * and (past a thousand) comma separators; the decimal is always a dot.
+ */
+function parseEuPrice(value: unknown): number | null {
+  if (typeof value !== "string") return null
+  const parsed = Number.parseFloat(value.replace(/[^\d.]/g, ""))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+/** "23/08/2026" (DD/MM/YYYY, as the portal writes dates) → epoch ms, or null. */
+function parseEuDate(value: unknown): number | null {
+  if (typeof value !== "string") return null
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim())
+  if (!m) return null
+  const ms = Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+  return Number.isFinite(ms) ? ms : null
+}
+
+/**
+ * One year of rows for one product in one member state, cached a day.
+ * A 404 here is the portal's spelling of "no data for these parameters" —
+ * absence, not failure — so it becomes an empty (and cacheable) list rather
+ * than an error. Anything else propagates to the caller's catch.
+ */
+async function fetchEuRows(
+  iso2: string,
+  product: string,
+  year: number,
+  options?: FetchOptions
+): Promise<EuPriceRow[]> {
+  return cached(cacheKey("eu-agrifood", iso2, product, year), EU_TTL_MS, async () => {
+    try {
+      const url =
+        `${EU_BASE}?memberStateCodes=${iso2}` +
+        `&products=${encodeURIComponent(product)}&years=${year}`
+      const raw = await euPolitely(
+        () =>
+          getJson<EuPriceRow[]>(url, {
+            ...options,
+            timeoutMs: options?.timeoutMs ?? PRICE_TIMEOUT_MS,
+          }),
+        options?.signal
+      )
+      return Array.isArray(raw) ? raw : []
+    } catch (e) {
+      if (isHttpError(e) && e.status === 404) return []
+      throw e
+    }
+  })
+}
+
+/**
+ * Rank a year's rows and keep the single best, or null.
+ *
+ * The portal is queried WITHOUT a productStages filter — stage coverage is
+ * patchy per country, and filtering server-side would turn "no farm-gate row"
+ * into "no price at all". Instead every stage comes back and the ranking
+ * prefers the one closest to what a farmer is paid: farm-gate, then
+ * ex-packaging, then whatever remains (retail-ish stages). Within a stage,
+ * newest week first, then a national-average row over a single named market;
+ * the variety-aware tie-break below settles the rest (multi-variety products
+ * tie on all three of those every single week).
+ * Hard gates first, as everywhere in this module: an unexpected unit or an
+ * unparseable price/date disqualifies the row — a wrong division would put a
+ * confidently wrong price on a card, which is worse than no price.
+ */
+function pickEuRow(rows: EuPriceRow[]): EuCandidate | null {
+  const tooOldBefore = Date.now() - EU_MAX_ROW_AGE_MS
+
+  const candidates: EuCandidate[] = []
+  for (const row of rows) {
+    // The portal's observed unit is uniformly "€/100Kg"; anything else means
+    // an assumption broke, so the row is skipped rather than guessed at.
+    if (typeof row.unit !== "string" || row.unit.trim().toLowerCase() !== "€/100kg") continue
+
+    const eur = parseEuPrice(row.price)
+    if (eur === null) continue
+
+    const endMs = parseEuDate(row.endDate)
+    if (endMs === null || endMs < tooOldBefore) continue
+
+    const stage = typeof row.productStage === "string" ? row.productStage : ""
+    const stageRank = /farm.?gate/i.test(stage) ? 0 : /ex.?packaging/i.test(stage) ? 1 : 2
+
+    // "Tomatoes - Cherry/Special" → "Cherry/Special"; the product half repeats
+    // what the query already said, the variety half is what varies row to row.
+    const rawVariety = typeof row.variety === "string" ? row.variety : ""
+    candidates.push({
+      eurPerKg: eur / 100,
+      stageRank,
+      endMs,
+      month: new Date(endMs).toISOString().slice(0, 7),
+      nationalAvg: typeof row.market === "string" && /national average/i.test(row.market),
+      stateName: typeof row.memberStateName === "string" ? row.memberStateName : "",
+      variety: rawVariety.replace(/^[^-]+-\s*/, "").trim(),
+      aggregate: /all types|all varieties|weighted average/i.test(rawVariety),
+    })
+  }
+
+  candidates.sort((a, b) => {
+    if (a.stageRank !== b.stageRank) return a.stageRank - b.stageRank
+    if (a.endMs !== b.endMs) return b.endMs - a.endMs
+    return Number(b.nationalAvg) - Number(a.nationalAvg)
+  })
+  const top = candidates[0]
+  if (!top) return null
+
+  // A full tie at the top is the NORM, not an edge case: every variety of a
+  // product publishes one row per stage per week, all "National average", so
+  // a variety-blind pick would crown whichever variety the portal happens to
+  // list first — for tomatoes the premium Cherry/Special, 2–3× the bulk Round
+  // price a farmer growing the generic crop would actually see. Within the
+  // tied group an aggregate row ("All types and varieties", "National
+  // weighted average…") is exactly the number wanted, so it wins outright;
+  // failing that, the MEDIAN-priced variety stands in — the typical commodity,
+  // neither the premium outlier nor a possibly distressed cheapest.
+  const tied = candidates.filter(
+    (c) =>
+      c.stageRank === top.stageRank &&
+      c.endMs === top.endMs &&
+      c.nationalAvg === top.nationalAvg
+  )
+  const aggregate = tied.find((c) => c.aggregate)
+  if (aggregate) return aggregate
+  const byPrice = tied.slice().sort((a, b) => a.eurPerKg - b.eurPerKg)
+  // Lower median on an even count: when in doubt, understate the revenue.
+  return byPrice[Math.floor((byPrice.length - 1) / 2)] ?? null
+}
+
+/**
+ * The freshest EU-portal price for a crop in a member state, or null.
+ *
+ * Null covers the same spectrum as the FPMA path: crop the portal does not
+ * track, a 404-absence, an empty year, only-stale rows, or a dead network —
+ * all of them mean "let the chain fall through to FPMA", so this function
+ * never throws. The current year is asked first and the previous one only
+ * when it comes back empty (early January would otherwise show nothing).
+ */
+async function fetchEuPrice(
+  iso2: string,
+  cropId: string,
+  options?: FetchOptions
+): Promise<MarketPrice | null> {
+  const product = EU_PRODUCT[cropId]
+  if (!product) return null
+
+  try {
+    const year = new Date().getFullYear()
+    let chosen = pickEuRow(await fetchEuRows(iso2, product, year, options))
+    if (!chosen) {
+      chosen = pickEuRow(await fetchEuRows(iso2, product, year - 1, options))
+    }
+    if (!chosen) return null
+
+    // The FX rate is fetched only once a row is worth converting; its own
+    // fallback constant means an EU price is never lost to a missing rate.
+    const usdPerKg = chosen.eurPerKg * (await eurToUsd(options))
+    if (usdPerKg <= 0 || usdPerKg > MAX_PLAUSIBLE_USD_PER_KG) return null
+
+    const stageLabel =
+      chosen.stageRank === 0 ? "farm-gate" : chosen.stageRank === 1 ? "ex-packaging" : "market"
+
+    // A specific variety must be named — quoting "Trusses" as if it were THE
+    // tomato price would be quietly wrong. Aggregate rows need no caveat: the
+    // whole-product average is exactly what the card claims to show.
+    const varietyLabel =
+      chosen.aggregate || chosen.variety.length === 0 ? "" : ` · ${chosen.variety}`
+
+    return {
+      usdPerKg,
+      localPerKg: chosen.eurPerKg,
+      currency: "EUR",
+      // `market` carries the human story: which country, how close to the farm
+      // the money was counted, and which variety when the portal quotes one —
+      // e.g. "Spain · farm-gate · Round".
+      market: `${chosen.stateName || iso2} · ${stageLabel}${varietyLabel}`,
+      // Farm-gate and ex-packaging are producer-side prices; "wholesale" is
+      // the nearest of MarketPrice's two flavours. Retail-ish stages say so.
+      priceType: chosen.stageRank <= 1 ? "wholesale" : "retail",
+      month: chosen.month,
+      // The portal has no series uuid; a minted stable id keeps the field's
+      // contract (same series → same key) without touching the MarketPrice type.
+      seriesUuid: `eu-agrifood:${iso2}:${product}`,
+      source: "EU agri-food",
+    }
+  } catch {
+    return null
+  }
+}
+
+/* ── The public chain ────────────────────────────────────────── */
+
 /**
  * The freshest observed market price for a crop in a country, or null.
  *
- * `countryCode` is ISO-2 as `Place.countryCode` carries it. Null means "no
- * price to show" for ANY reason — country not covered, crop not tracked,
- * series stale, network dead, request aborted — and that is deliberate:
- * unlike the rest of the services this one never throws, not even an abort,
- * because the consuming hook treats null as absence and guards staleness
- * itself. A crash path from a decorative number is a bug by definition.
+ * `countryCode` is ISO-2 as `Place.countryCode` carries it, and it routes the
+ * chain: an EU member tries the EU portal first and falls through to FPMA
+ * when the portal has nothing; everyone else goes straight to FPMA. Null
+ * means "no price to show" for ANY reason — country not covered, crop not
+ * tracked, series stale, network dead, request aborted — and that is
+ * deliberate: unlike the rest of the services this one never throws, not even
+ * an abort, because the consuming hook treats null as absence and guards
+ * staleness itself. A crash path from a decorative number is a bug by
+ * definition.
  */
 export async function fetchMarketPrice(
   countryCode: string,
@@ -323,6 +623,12 @@ export async function fetchMarketPrice(
   options?: FetchOptions
 ): Promise<MarketPrice | null> {
   try {
+    const iso2 = countryCode.trim().toUpperCase()
+    if (EU_MEMBERS.has(iso2)) {
+      const euPrice = await fetchEuPrice(iso2, cropId, options)
+      if (euPrice) return euPrice
+    }
+
     const iso3 = iso3Of(countryCode)
     if (!iso3) return null
     const rule = CROP_COMMODITY[cropId]

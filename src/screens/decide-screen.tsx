@@ -1,6 +1,12 @@
 import { AnimatePresence, motion } from "framer-motion"
 import { useMemo } from "react"
 
+import {
+  CropShortlist,
+  ScoreDrop,
+  priceMonth,
+  selectShortlist,
+} from "@/components/decide/crop-shortlist"
 import { WarningIcon } from "@/components/ghella/icons"
 import { CropMatches } from "@/components/land/crop-matches"
 import { SectionLabel, ScreenTitle } from "@/components/ghella/primitives"
@@ -16,7 +22,6 @@ import {
   type Variety,
 } from "@/data/varieties"
 import { useMarketPrices } from "@/hooks/use-market-prices"
-import type { Lang } from "@/i18n/dict"
 import { useT } from "@/i18n/use-t"
 import { applyIrrigation } from "@/lib/crop-suitability"
 import { C } from "@/lib/colors"
@@ -49,14 +54,6 @@ const PRICEABLE = [...new Set(Object.values(VARIETY_CROP))]
  */
 const DEMO_AREA_HA = 0.8
 
-/** "2026-01" → "Jan 2026" in the reader's language. Noon keeps the label on the first of the month in every timezone. */
-function priceMonth(month: string, lang: Lang): string {
-  return new Date(`${month}-01T12:00:00`).toLocaleDateString(
-    lang === "fr" ? "fr" : lang === "ar" ? "ar" : "en",
-    { month: "short", year: "numeric" }
-  )
-}
-
 /**
  * Honest card economics from a live FPMA price and the parcel's true area:
  * indicative yield × observed price, against the demo input costs rescaled
@@ -82,63 +79,9 @@ function liveEconomics(
   return { net, cost, wps }
 }
 
-/** Water-profit score, drawn as a drop filling from the bottom. */
-function ScoreDrop({ id, wps }: { id: VarietyId; wps: number }) {
-  const { t } = useT()
-  const clipId = `dcp-${id}`
-  const fillY = 51 - Math.min(wps / 12, 1) * 42
-  const label = wps > 8.5 ? C.surface : C.ink
-
-  return (
-    <div className="flex w-[76px] flex-none flex-col items-center gap-[3px]">
-      <svg width="64" height="64" viewBox="0 0 56 56">
-        <circle cx="28" cy="28" r="26" fill="#f2f0e6" stroke={C.ink} strokeWidth="2" />
-        <path
-          d="M28 9 C28 9 42 26 42 35 A14 14 0 0 1 14 35 C14 26 28 9 28 9 Z"
-          fill="none"
-          stroke={C.waterPale}
-          strokeWidth="2"
-        />
-        <clipPath id={clipId}>
-          <motion.rect
-            x="10"
-            width="36"
-            height="42"
-            initial={{ y: 51 }}
-            animate={{ y: fillY }}
-            transition={{ duration: 0.45, ease: "easeOut" }}
-          />
-        </clipPath>
-        <path
-          d="M28 9 C28 9 42 26 42 35 A14 14 0 0 1 14 35 C14 26 28 9 28 9 Z"
-          fill={C.water}
-          clipPath={`url(#${clipId})`}
-        />
-        <text
-          x="28"
-          y="31"
-          textAnchor="middle"
-          style={{ font: "700 13px 'Space Grotesk',sans-serif" }}
-          fill={label}
-        >
-          {wps.toFixed(1)}
-        </text>
-        <text
-          x="28"
-          y="41"
-          textAnchor="middle"
-          style={{ font: "700 5.5px 'Space Mono',monospace" }}
-          fill={label}
-        >
-          {t.decUnit}
-        </text>
-      </svg>
-      <span className="text-center font-mono text-[9px] leading-[1.25] font-bold text-water-deep">
-        {t.decWps}
-      </span>
-    </div>
-  )
-}
+// ScoreDrop and priceMonth moved to components/decide/crop-shortlist.tsx so
+// the demo VarietyCard and the real CropShortlist share one pixel-identical
+// definition; they are imported back above.
 
 function VarietyCard({
   id,
@@ -406,11 +349,16 @@ export function DecideScreen() {
   )
   const hasReal = matches.length > 0
 
-  // FPMA prices for the shortlist's crops in the parcel's country. Most
-  // countries have no series for most crops — every miss is a null, and the
-  // cards that miss keep their demo forecast.
+  // Market prices for whichever cards will actually render: with a real
+  // analysis, THIS parcel's own top-8 shortlist crops (EU portal or FPMA,
+  // whichever covers the country — an unpriceable id just resolves null);
+  // without one, the five demo varieties' crops. Every miss is a null, and
+  // the card that misses falls back to its indicative or demo price.
   const countryCode = analysis?.place?.countryCode ?? null
-  const { prices } = useMarketPrices(countryCode, PRICEABLE)
+  const { prices } = useMarketPrices(
+    countryCode,
+    hasReal ? selectShortlist(matches).map((m) => m.id) : PRICEABLE
+  )
   const anyPrice = Object.values(prices).some((p) => p != null)
   // A price only RENDERS live when a real area exists to scale it against.
   const liveShown = anyPrice && parcel != null && hasReal
@@ -498,24 +446,32 @@ export function DecideScreen() {
         ))}
       </div>
 
-      <motion.div
-        key={sort}
-        variants={listStagger}
-        initial="hidden"
-        animate="show"
-        className="flex flex-col gap-[11px]"
-      >
-        {order.map((id) => (
-          <VarietyCard
-            key={id}
-            id={id}
-            v={VARIETIES[id]}
-            real={matchByCrop.get(VARIETY_CROP[id])}
-            price={prices[VARIETY_CROP[id]] ?? null}
-            areaHa={parcel && hasReal ? parcel.areaHa : null}
-          />
-        ))}
-      </motion.div>
+      {/* With an analysed parcel the cards are generated from ITS own top
+          matches — a Tunisian field shortlists what suits Tunisia, a Spanish
+          field Spain. The scripted demo varieties only render where no
+          analysis exists to replace them. */}
+      {parcel && hasReal ? (
+        <CropShortlist parcel={parcel} matches={matches} prices={prices} sort={sort} />
+      ) : (
+        <motion.div
+          key={sort}
+          variants={listStagger}
+          initial="hidden"
+          animate="show"
+          className="flex flex-col gap-[11px]"
+        >
+          {order.map((id) => (
+            <VarietyCard
+              key={id}
+              id={id}
+              v={VARIETIES[id]}
+              real={matchByCrop.get(VARIETY_CROP[id])}
+              price={prices[VARIETY_CROP[id]] ?? null}
+              areaHa={parcel && hasReal ? parcel.areaHa : null}
+            />
+          ))}
+        </motion.div>
+      )}
 
       {/* FPMA observes retail/wholesale in a city market, not the farm gate —
           the one honesty note the live numbers must carry. */}

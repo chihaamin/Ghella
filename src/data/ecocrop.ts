@@ -8,6 +8,14 @@
  * variety bred for your valley will beat these numbers, and a bad year will
  * miss them — treat a match as a shortlist, never as a guarantee.
  *
+ * Each entry also carries three indicative ECONOMICS fields — `yieldTHa`,
+ * `inputCostUsdPerHa` and `refPriceUsdPerKg`. They are FAO / World-Bank-level
+ * reference figures for irrigated EMEA production under decent management
+ * (world producer-price levels, mid-range yields and season costs), NOT
+ * local quotes. `refPriceUsdPerKg` is the labelled fallback shown when no
+ * live price series (FPMA domestic or EU agri-food) covers the farmer's
+ * country.
+ *
  * The table is bundled rather than fetched on purpose: the crop matcher has to
  * work on a phone with no signal standing in the middle of a field.
  *
@@ -67,6 +75,12 @@ export interface CropEnvelope {
   frostSensitive: boolean
   /** Salt tolerance, dS/m threshold; used later. */
   salinityToleranceDsM: number
+  /** Indicative marketable yield under decent management, t/ha. */
+  yieldTHa: number
+  /** Indicative season input cost (seed, fertiliser, protection, water energy, labour), USD/ha. */
+  inputCostUsdPerHa: number
+  /** Indicative world producer-price level, USD/kg — the LABELLED fallback when no live series covers the farmer's country. */
+  refPriceUsdPerKg: number
   /** One line a farmer would find useful. */
   note: string
 }
@@ -93,6 +107,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 500,
     frostSensitive: true,
     salinityToleranceDsM: 2.5,
+    yieldTHa: 45,
+    inputCostUsdPerHa: 20000,
+    refPriceUsdPerKg: 1.55,
     note: "Above 35 °C the flowers drop and no fruit sets — time the crop so flowering misses the peak of summer.",
   },
   {
@@ -111,6 +128,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 550,
     frostSensitive: true,
     salinityToleranceDsM: 1.5,
+    yieldTHa: 26,
+    inputCostUsdPerHa: 17000,
+    refPriceUsdPerKg: 2.1,
     note: "Shallow-rooted and thirsty in small sips: little and often beats one big flood, which splits the fruit.",
   },
   {
@@ -129,6 +149,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 500,
     frostSensitive: true,
     salinityToleranceDsM: 1.5,
+    yieldTHa: 18,
+    inputCostUsdPerHa: 9000,
+    refPriceUsdPerKg: 1.6,
     note: "Takes more heat than sweet pepper and dries down for storage, which turns a glut into a crop you can hold.",
   },
   {
@@ -147,6 +170,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 400,
     frostSensitive: false,
     salinityToleranceDsM: 1.2,
+    yieldTHa: 38,
+    inputCostUsdPerHa: 11500,
+    refPriceUsdPerKg: 0.95,
     note: "Day length decides whether it bulbs at all — below about 30° latitude buy short-day types, further north long-day.",
   },
   {
@@ -165,6 +191,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 400,
     frostSensitive: false,
     salinityToleranceDsM: 1.7,
+    yieldTHa: 10,
+    inputCostUsdPerHa: 8000,
+    refPriceUsdPerKg: 2.5,
     note: "Needs a cold spell of 4–10 °C after planting or the bulb stays a single round clove.",
   },
   {
@@ -183,6 +212,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 600,
     frostSensitive: true,
     salinityToleranceDsM: 1.5,
+    yieldTHa: 35,
+    inputCostUsdPerHa: 10000,
+    refPriceUsdPerKg: 0.6,
     note: "Keeps cropping for months if you pick young and keep the water steady; it stops dead the first cold night.",
   },
   {
@@ -201,6 +233,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 380,
     frostSensitive: false,
     salinityToleranceDsM: 1.8,
+    yieldTHa: 40,
+    inputCostUsdPerHa: 6000,
+    refPriceUsdPerKg: 0.35,
     note: "A cool-season crop that sweetens after light frost; above 25 °C the heads go loose and split.",
   },
   {
@@ -219,6 +254,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 400,
     frostSensitive: false,
     salinityToleranceDsM: 1.8,
+    yieldTHa: 22,
+    inputCostUsdPerHa: 7000,
+    refPriceUsdPerKg: 0.55,
     note: "Fussier than cabbage: any check from drought or heat during curd formation leaves a small, grainy head.",
   },
   {
@@ -237,6 +275,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 350,
     frostSensitive: false,
     salinityToleranceDsM: 1.0,
+    yieldTHa: 35,
+    inputCostUsdPerHa: 7500,
+    refPriceUsdPerKg: 0.4,
     note: "Stones and hard pans fork the roots — on heavy ground grow a short stump type or nothing.",
   },
   {
@@ -255,6 +296,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 250,
     frostSensitive: false,
     salinityToleranceDsM: 1.3,
+    yieldTHa: 22,
+    inputCostUsdPerHa: 6500,
+    refPriceUsdPerKg: 0.6,
     note: "Fast cash between two main crops; over 24 °C it bolts and turns bitter within days.",
   },
   {
@@ -273,6 +317,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 400,
     frostSensitive: true,
     salinityToleranceDsM: 2.5,
+    yieldTHa: 40,
+    inputCostUsdPerHa: 9000,
+    refPriceUsdPerKg: 0.55,
     note: "Let it dry out once and the fruit turns bitter; a short dry spell cannot be undone by watering later.",
   },
   {
@@ -291,6 +338,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 300,
     frostSensitive: true,
     salinityToleranceDsM: 3.2,
+    yieldTHa: 25,
+    inputCostUsdPerHa: 6500,
+    refPriceUsdPerKg: 0.55,
     note: "The quickest money on this list, but it must be picked every other day or the plant stops setting.",
   },
   {
@@ -309,6 +359,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 450,
     frostSensitive: true,
     salinityToleranceDsM: 1.5,
+    yieldTHa: 12,
+    inputCostUsdPerHa: 5500,
+    refPriceUsdPerKg: 0.9,
     note: "One of the few vegetables that keeps cropping through real summer heat; sow only once the soil is above 18 °C.",
   },
   {
@@ -327,6 +380,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 350,
     frostSensitive: false,
     salinityToleranceDsM: 1.6,
+    yieldTHa: 12,
+    inputCostUsdPerHa: 4500,
+    refPriceUsdPerKg: 0.7,
     note: "Picked green for the pod market; it also fixes nitrogen, so it pays twice as a winter break crop.",
   },
   {
@@ -345,6 +401,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 300,
     frostSensitive: true,
     salinityToleranceDsM: 1.0,
+    yieldTHa: 12,
+    inputCostUsdPerHa: 6000,
+    refPriceUsdPerKg: 1,
     note: "The most salt-sensitive crop in this table — on salty ground it yellows before it flowers.",
   },
 
@@ -365,6 +424,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 450,
     frostSensitive: false,
     salinityToleranceDsM: 5.7,
+    yieldTHa: 4.5,
+    inputCostUsdPerHa: 1000,
+    refPriceUsdPerKg: 0.32,
     note: "The pasta and couscous wheat: wants a dry, bright ripening period, and a wet June downgrades the grain.",
   },
   {
@@ -383,6 +445,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 450,
     frostSensitive: false,
     salinityToleranceDsM: 6.0,
+    yieldTHa: 5,
+    inputCostUsdPerHa: 1000,
+    refPriceUsdPerKg: 0.25,
     note: "Forgiving and always sellable; the grain fills in the last month, so that is the irrigation you must not skip.",
   },
   {
@@ -401,6 +466,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 350,
     frostSensitive: false,
     salinityToleranceDsM: 8.0,
+    yieldTHa: 4.5,
+    inputCostUsdPerHa: 800,
+    refPriceUsdPerKg: 0.22,
     note: "The toughest cereal here — where salt or drought beats wheat, barley still makes a crop.",
   },
   {
@@ -419,6 +487,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 550,
     frostSensitive: true,
     salinityToleranceDsM: 1.7,
+    yieldTHa: 9,
+    inputCostUsdPerHa: 1400,
+    refPriceUsdPerKg: 0.2,
     note: "Two weeks either side of tasselling decide the yield; water stress then costs more than at any other stage.",
   },
   {
@@ -437,6 +508,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 400,
     frostSensitive: true,
     salinityToleranceDsM: 6.8,
+    yieldTHa: 4.5,
+    inputCostUsdPerHa: 700,
+    refPriceUsdPerKg: 0.25,
     note: "Waits out a dry spell and starts again when rain returns, which maize cannot do.",
   },
   {
@@ -455,6 +529,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 300,
     frostSensitive: true,
     salinityToleranceDsM: 6.0,
+    yieldTHa: 2.5,
+    inputCostUsdPerHa: 450,
+    refPriceUsdPerKg: 0.35,
     note: "The last cereal that still yields on hot, poor sand under 400 mm of rain.",
   },
   {
@@ -473,6 +550,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 1200,
     frostSensitive: true,
     salinityToleranceDsM: 3.0,
+    yieldTHa: 6.5,
+    inputCostUsdPerHa: 1800,
+    refPriceUsdPerKg: 0.35,
     note: "Only worth it on heavy soil that holds standing water — on sand the basins drain and the water bill doubles.",
   },
 
@@ -493,6 +573,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 350,
     frostSensitive: false,
     salinityToleranceDsM: 1.5,
+    yieldTHa: 2.2,
+    inputCostUsdPerHa: 700,
+    refPriceUsdPerKg: 0.8,
     note: "Grows on stored winter moisture with little or no irrigation; waterlogging for two days will kill the stand.",
   },
   {
@@ -511,6 +594,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 300,
     frostSensitive: false,
     salinityToleranceDsM: 1.4,
+    yieldTHa: 1.8,
+    inputCostUsdPerHa: 600,
+    refPriceUsdPerKg: 0.9,
     note: "Low water, high price per kilo, and it leaves nitrogen behind for next season's cereal.",
   },
   {
@@ -529,6 +615,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 450,
     frostSensitive: false,
     salinityToleranceDsM: 1.6,
+    yieldTHa: 3,
+    inputCostUsdPerHa: 800,
+    refPriceUsdPerKg: 0.55,
     note: "The heavy-soil break crop: fixes the most nitrogen of any legume here, but needs steady moisture at flowering.",
   },
   {
@@ -547,6 +636,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 350,
     frostSensitive: true,
     salinityToleranceDsM: 4.9,
+    yieldTHa: 1.8,
+    inputCostUsdPerHa: 500,
+    refPriceUsdPerKg: 0.8,
     note: "Heat- and salt-tolerant, and the haulm feeds livestock after the grain is picked.",
   },
   {
@@ -565,6 +657,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 500,
     frostSensitive: true,
     salinityToleranceDsM: 3.2,
+    yieldTHa: 3,
+    inputCostUsdPerHa: 1200,
+    refPriceUsdPerKg: 1.1,
     note: "The pegs must push into loose soil to form pods, so it fails on crusting clay however good the rain is.",
   },
 
@@ -585,6 +680,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 500,
     frostSensitive: true,
     salinityToleranceDsM: 1.7,
+    yieldTHa: 35,
+    inputCostUsdPerHa: 6000,
+    refPriceUsdPerKg: 0.3,
     note: "Tubers stop bulking above 25 °C of night heat; slightly acid soil also keeps common scab down.",
   },
   {
@@ -603,6 +701,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 500,
     frostSensitive: true,
     salinityToleranceDsM: 1.5,
+    yieldTHa: 25,
+    inputCostUsdPerHa: 4000,
+    refPriceUsdPerKg: 0.4,
     note: "Feeds a family off poor sandy ground; too much nitrogen gives you vines and no roots.",
   },
   {
@@ -621,6 +722,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 600,
     frostSensitive: false,
     salinityToleranceDsM: 7.0,
+    yieldTHa: 70,
+    inputCostUsdPerHa: 2500,
+    refPriceUsdPerKg: 0.05,
     note: "One of the few crops that pays on salty, alkaline ground, but you need a contract with a mill before you sow.",
   },
 
@@ -641,6 +745,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 450,
     frostSensitive: true,
     salinityToleranceDsM: 2.5,
+    yieldTHa: 40,
+    inputCostUsdPerHa: 5500,
+    refPriceUsdPerKg: 0.25,
     note: "Wants heat and light soil; ease off the water in the last two weeks or the fruit is watery and cracks.",
   },
   {
@@ -659,6 +766,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 400,
     frostSensitive: true,
     salinityToleranceDsM: 2.2,
+    yieldTHa: 32,
+    inputCostUsdPerHa: 13000,
+    refPriceUsdPerKg: 1.15,
     note: "Sugar comes from dry, sunny ripening — rain or heavy irrigation in the last fortnight flattens the taste.",
   },
   {
@@ -677,6 +787,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 450,
     frostSensitive: false,
     salinityToleranceDsM: 1.0,
+    yieldTHa: 25,
+    inputCostUsdPerHa: 20000,
+    refPriceUsdPerKg: 2.2,
     note: "The plant shrugs off winter but an open flower is killed at −1 °C, so cover the rows on clear spring nights.",
   },
   {
@@ -697,6 +810,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 400,
     frostSensitive: false,
     salinityToleranceDsM: 2.7,
+    yieldTHa: 4.5,
+    inputCostUsdPerHa: 2800,
+    refPriceUsdPerKg: 1.1,
     note: "Needs about two months below 12 °C to flower at all, and four to seven years before it pays back the planting.",
   },
   {
@@ -720,6 +836,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 1800,
     frostSensitive: false,
     salinityToleranceDsM: 4.0,
+    yieldTHa: 6.5,
+    inputCostUsdPerHa: 5000,
+    refPriceUsdPerKg: 3,
     note: "Its feet in water and its head in fire: it takes salty irrigation, but rain at ripening rots the fruit on the bunch.",
   },
   {
@@ -740,6 +859,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 900,
     frostSensitive: false,
     salinityToleranceDsM: 1.7,
+    yieldTHa: 30,
+    inputCostUsdPerHa: 4500,
+    refPriceUsdPerKg: 0.35,
     note: "A night below −3 °C ruins the hanging fruit; it also dislikes salty water more than most tree crops.",
   },
   {
@@ -760,6 +882,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 500,
     frostSensitive: false,
     salinityToleranceDsM: 1.5,
+    yieldTHa: 15,
+    inputCostUsdPerHa: 5500,
+    refPriceUsdPerKg: 0.7,
     note: "Dry, breezy ripening is everything — humid or rainy Augusts mean bunch rot whatever you spray.",
   },
   {
@@ -780,6 +905,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 450,
     frostSensitive: false,
     salinityToleranceDsM: 3.0,
+    yieldTHa: 8,
+    inputCostUsdPerHa: 3000,
+    refPriceUsdPerKg: 1.5,
     note: "Survives on very little water and poor stony ground; the fruit is fragile, so plan the market before you plant.",
   },
   {
@@ -800,6 +928,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 700,
     frostSensitive: false,
     salinityToleranceDsM: 1.5,
+    yieldTHa: 2,
+    inputCostUsdPerHa: 3500,
+    refPriceUsdPerKg: 4,
     note: "Blooms earlier than any other tree here, so one late spring frost at flowering costs the whole year's crop.",
   },
   {
@@ -820,6 +951,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 600,
     frostSensitive: false,
     salinityToleranceDsM: 4.5,
+    yieldTHa: 20,
+    inputCostUsdPerHa: 4500,
+    refPriceUsdPerKg: 0.8,
     note: "Handles heat, drought and salty ground; keep the water even near harvest or the fruit splits open.",
   },
 
@@ -842,6 +976,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 1200,
     frostSensitive: false,
     salinityToleranceDsM: 2.0,
+    yieldTHa: 16,
+    inputCostUsdPerHa: 2500,
+    refPriceUsdPerKg: 0.2,
     note: "Cut four to eight times a year for five years, but it is the thirstiest crop in this table — count the water first.",
   },
   {
@@ -860,6 +997,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 400,
     frostSensitive: false,
     salinityToleranceDsM: 4.0,
+    yieldTHa: 8,
+    inputCostUsdPerHa: 900,
+    refPriceUsdPerKg: 0.15,
     note: "Cheap winter grazing or hay that tolerates acid soil where barley sulks; graze it before the stem shoots up.",
   },
 
@@ -880,6 +1020,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 500,
     frostSensitive: false,
     salinityToleranceDsM: 4.8,
+    yieldTHa: 2.8,
+    inputCostUsdPerHa: 800,
+    refPriceUsdPerKg: 0.45,
     note: "Roots go down two metres and pull up water other crops cannot reach — a good first crop after a dry winter.",
   },
   {
@@ -898,6 +1041,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 450,
     frostSensitive: false,
     salinityToleranceDsM: 7.0,
+    yieldTHa: 3,
+    inputCostUsdPerHa: 900,
+    refPriceUsdPerKg: 0.45,
     note: "A winter oilseed that breaks cereal disease cycles; the seed is tiny, so a fine, firm seedbed decides the stand.",
   },
   {
@@ -916,6 +1062,9 @@ export const ECOCROP: CropEnvelope[] = [
     waterNeedMm: 350,
     frostSensitive: true,
     salinityToleranceDsM: 1.0,
+    yieldTHa: 0.8,
+    inputCostUsdPerHa: 500,
+    refPriceUsdPerKg: 1.6,
     note: "Drought-hardy but killed by two days of standing water; harvest as the lowest capsules open or the seed spills.",
   },
 ]

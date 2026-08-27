@@ -67,6 +67,8 @@ const en = {
     "Scores come from your parcel’s soil, 10-year weather and regional wholesale prices. Nothing here is a black box — tap any score.",
   decShortlist: "VARIETY SHORTLIST · DEMO MARKET PRICES",
   decShortlistLive: "VARIETY SHORTLIST · LIVE MARKET PRICES",
+  decIndicative: "indicative",
+  decNoSeries: "no local price series",
   decFarmGate:
     "Live prices are retail/wholesale from FAO FPMA — farm-gate is usually lower. Cards without a price series for your country keep the demo forecast.",
   decForLand: "BEST FOR THIS LAND",
@@ -340,6 +342,8 @@ const fr: Partial<Dict> = {
     "Scores calculés depuis votre sol, 10 ans de météo et les prix de gros régionaux. Rien n’est une boîte noire.",
   decShortlist: "SÉLECTION VARIÉTALE · PRIX DÉMO",
   decShortlistLive: "SÉLECTION VARIÉTALE · PRIX RÉELS",
+  decIndicative: "indicatif",
+  decNoSeries: "pas de série de prix locale",
   decFarmGate:
     "Prix réels détail/gros (FAO FPMA) — le prix au champ est souvent plus bas. Sans série pour votre pays, la carte garde le prix démo.",
   decForLand: "LE MEILLEUR POUR CETTE TERRE",
@@ -493,6 +497,8 @@ const ar: Partial<Dict> = {
     "النتائج محسوبة من تربتك، 10 سنوات طقس وأسعار الجملة الإقليمية. لا صندوق أسود هنا.",
   decShortlist: "قائمة الأصناف · أسعار تجريبية",
   decShortlistLive: "قائمة الأصناف · أسعار حقيقية",
+  decIndicative: "استرشادي",
+  decNoSeries: "لا سلسلة أسعار محلية",
   decFarmGate:
     "الأسعار الحقيقية تجزئة/جملة من FAO FPMA — سعر المزرعة عادة أدنى. البطاقات بلا سلسلة أسعار لبلدك تُبقي السعر التجريبي.",
   decForLand: "الأنسب لهذه الأرض",
