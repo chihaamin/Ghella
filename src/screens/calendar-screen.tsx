@@ -1,8 +1,11 @@
 import { AnimatePresence, motion } from "framer-motion"
+import type { DayButtonProps } from "react-day-picker"
+import { ar as arLocale, enUS, fr as frLocale } from "react-day-picker/locale"
 
 import { SectionLabel } from "@/components/ghella/primitives"
 import { TaskCard } from "@/components/ghella/task-card"
 import { FrostBanner, WeatherStrip } from "@/components/ghella/weather-strip"
+import { Calendar, dayButtonClass } from "@/components/ui/calendar"
 import { Segmented } from "@/components/ui/segmented"
 import {
   PHASES,
@@ -10,11 +13,10 @@ import {
   STAGE_CARDS,
   YEAR_COLORS,
   YEAR_LEGEND,
-  YEAR_MONTHS,
   YEAR_ROWS,
 } from "@/data/plan"
 import { CROP_SUBTITLE } from "@/data/varieties"
-import { useCalendarData, weekdayInitials } from "@/hooks/use-calendar"
+import { dateOfIso, isoOfDate, useCalendarData } from "@/hooks/use-calendar"
 import { useT } from "@/i18n/use-t"
 import { C, TASK_COLOR } from "@/lib/colors"
 import { fadeUp, listStagger } from "@/lib/motion"
@@ -215,72 +217,59 @@ function TodayView() {
 
 function MonthView() {
   const { t, lang } = useT()
-  const { days, dayTasks, dayTitle, dayCount } = useCalendarData()
-  const selDay = useApp((s) => s.selDay)
+  const { schedule, seasonStart, selectedIso, dayTasks, dayTitle, dayCount } =
+    useCalendarData()
   const set = useApp((s) => s.set)
+
+  // react-day-picker speaks date-fns locales; ours map 1:1.
+  const locale = lang === "fr" ? frLocale : lang === "ar" ? arLocale : enUS
+
+  /** Day cell: real date numeral + this day's task dots. */
+  const TaskDay = (props: DayButtonProps) => {
+    const { day, modifiers, ...button } = props
+    const mark = schedule.get(isoOfDate(day.date))
+    return (
+      <button
+        {...button}
+        type="button"
+        className={cn(
+          dayButtonClass(modifiers),
+          mark?.target && !modifiers.selected && "border-[1.5px] border-water"
+        )}
+      >
+        <span className="font-display text-[11.5px] font-semibold">
+          {day.date.getDate()}
+        </span>
+        <span className="flex min-h-[5px] gap-0.5">
+          {(mark?.dots ?? []).map((c, i) => (
+            <span
+              key={i}
+              className="size-[4.5px] rounded-full"
+              style={{ background: c }}
+            />
+          ))}
+        </span>
+      </button>
+    )
+  }
 
   return (
     <div className="rounded-[13px] border border-line bg-card p-3">
-      <div className="flex items-center justify-between pb-2">
-        <span className="font-mono text-[13px] font-bold text-line-dash">‹</span>
-        <span className="font-display text-[14px] font-bold">{t.calMonthName}</span>
-        <span className="font-mono text-[13px] font-bold text-line-dash">›</span>
-      </div>
-
-      <div className="grid grid-cols-7 gap-[3px]">
-        {weekdayInitials(lang).map((n, i) => (
-          <div
-            key={i}
-            className="py-[3px] text-center font-mono text-[9.5px] font-bold text-line-dash"
-          >
-            {n}
-          </div>
-        ))}
-
-        {/* September 2026 starts on a Tuesday. */}
-        <div />
-
-        {days.map((d) => {
-          const selected = selDay === Number(d.n)
-          return (
-            <button
-              key={d.n}
-              type="button"
-              onClick={() => set({ selDay: Number(d.n) })}
-              className={cn(
-                "flex aspect-[0.92] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg transition-colors",
-                d.isToday ? "bg-ink" : "bg-transparent",
-                selected
-                  ? "border-2 border-ink"
-                  : d.target
-                    ? "border-[1.5px] border-water"
-                    : "border-none"
-              )}
-            >
-              <span
-                className={cn(
-                  "font-display text-[11.5px] font-semibold",
-                  d.isToday ? "text-cream" : "text-ink"
-                )}
-              >
-                {d.n}
-              </span>
-              <div className="flex min-h-[5px] gap-0.5">
-                {d.dots.map((c, i) => (
-                  <span
-                    key={i}
-                    className="size-[4.5px] rounded-full"
-                    style={{ background: c }}
-                  />
-                ))}
-              </div>
-            </button>
-          )
-        })}
-      </div>
+      <Calendar
+        mode="single"
+        selected={dateOfIso(selectedIso)}
+        onSelect={(d) => d && set({ selDate: isoOfDate(d) })}
+        defaultMonth={dateOfIso(selectedIso) ?? seasonStart}
+        captionLayout="dropdown"
+        startMonth={new Date(seasonStart.getFullYear() - 3, 0)}
+        endMonth={new Date(seasonStart.getFullYear() + 3, 11)}
+        locale={locale}
+        dir={lang === "ar" ? "rtl" : "ltr"}
+        components={{ DayButton: TaskDay }}
+      />
 
       <motion.div
-        key={selDay}
+        key={selectedIso}
         variants={fadeUp}
         initial="hidden"
         animate="show"
@@ -333,25 +322,37 @@ function MonthView() {
 }
 
 function YearView() {
-  const { t } = useT()
+  const { t, lang } = useT()
+  const { seasonStart } = useCalendarData()
   const set = useApp((s) => s.set)
   const names = [t.pNorth, t.pOued, t.pHill]
+
+  // Twelve real months rolling from the season's start month — the strip
+  // follows the actual year instead of a hardcoded SEP→AUG.
+  const locale = lang === "fr" ? "fr" : lang === "ar" ? "ar" : "en"
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(seasonStart.getFullYear(), seasonStart.getMonth() + i, 1)
+    return d
+  })
+  const monthLabel = (d: Date, form: "narrow" | "short") =>
+    d.toLocaleDateString(locale, { month: form })
+  const range = `${monthLabel(months[0], "short").toUpperCase()} ${months[0].getFullYear()} → ${monthLabel(months[11], "short").toUpperCase()} ${months[11].getFullYear()}`
 
   return (
     <div className="flex flex-col gap-2.5 rounded-[13px] border border-line bg-card p-[13px]">
       <div className="flex items-baseline justify-between">
         <span className="font-display text-[13px] font-bold">{t.yearTitle}</span>
-        <span className="font-mono text-[10px] font-bold text-muted-2">SEP 2026 → AUG 2027</span>
+        <span className="font-mono text-[10px] font-bold text-muted-2">{range}</span>
       </div>
 
       <div className="flex items-center gap-1.5">
         <span className="w-14 flex-none" />
-        {YEAR_MONTHS.map((n, i) => (
+        {months.map((m, i) => (
           <span
             key={i}
             className="flex-1 text-center font-mono text-[9px] font-bold text-line-dash"
           >
-            {n}
+            {monthLabel(m, "narrow")}
           </span>
         ))}
       </div>
@@ -367,7 +368,7 @@ function YearView() {
                 onClick={() => set({ calView: "month" })}
                 className="h-[22px] flex-1 cursor-pointer rounded-[4px]"
                 style={{ background: YEAR_COLORS[k] }}
-                aria-label={`${names[ri]} ${YEAR_MONTHS[ci]}`}
+                aria-label={`${names[ri]} ${monthLabel(months[ci], "short")}`}
               />
             ))}
           </div>

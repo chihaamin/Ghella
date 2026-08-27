@@ -52,7 +52,10 @@ export interface AppState {
 
   // ── Calendar ──────────────────────────────────────────────
   calView: CalView
-  selDay: number
+  /** Selected calendar day, ISO "YYYY-MM-DD"; null = today. */
+  selDate: string | null
+  /** The day the season plan was committed, ISO date; anchors the schedule. */
+  seasonStartIso: string | null
   tstat: Partial<Record<string, TaskStatus>>
 
   // ── Disease flow ──────────────────────────────────────────
@@ -135,7 +138,8 @@ const initial: AppState = {
   open: "rg",
 
   calView: "today",
-  selDay: 3,
+  selDate: null,
+  seasonStartIso: null,
   tstat: {},
 
   dz: 0,
@@ -224,7 +228,13 @@ export const useApp = create<AppState & AppActions>((set, get) => ({
 
   commitVariety: (id, message) => {
     get().toast(message)
-    set({ planned: id, screen: "cal", calView: "plan" })
+    // The commit day anchors the whole schedule to real dates.
+    set({
+      planned: id,
+      screen: "cal",
+      calView: "plan",
+      seasonStartIso: new Date().toISOString().slice(0, 10),
+    })
   },
   toggleVariety: (id) => set((s) => ({ open: s.open === id ? "" : id })),
 
