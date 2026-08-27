@@ -21,15 +21,17 @@ import {
   sortLabels,
   type Variety,
 } from "@/data/varieties"
+import { useLocalCurrency, type LocalCurrency } from "@/hooks/use-local-currency"
 import { useMarketPrices } from "@/hooks/use-market-prices"
 import { useT } from "@/i18n/use-t"
+import { ECOCROP } from "@/data/ecocrop"
 import { applyIrrigation } from "@/lib/crop-suitability"
 import { C } from "@/lib/colors"
 import { expand, fadeUp, listStagger } from "@/lib/motion"
 import { cn, fmt, money } from "@/lib/utils"
 import { useApp, type SortKey, type VarietyId } from "@/store/app-store"
 import { selectFocusParcel, useParcels } from "@/store/parcel-store"
-import type { CropMatch, MarketPrice } from "@/types/land"
+import type { CropMatch, MarketPrice, Parcel } from "@/types/land"
 
 /**
  * Each demo variety's crop in the EcoCrop table, so a variety card can carry
@@ -89,6 +91,8 @@ function VarietyCard({
   real,
   price = null,
   areaHa = null,
+  parcel = null,
+  local = null,
 }: {
   id: VarietyId
   v: Variety
@@ -98,12 +102,68 @@ function VarietyCard({
   price?: MarketPrice | null
   /** The selected parcel's true area, ha — the demo economics assume 0.8 ha. */
   areaHa?: number | null
+  /** The parcel a real plan would attach to; null keeps the scripted demo. */
+  parcel?: Parcel | null
+  /** Field-country currency, for freezing a real plan's money display. */
+  local?: LocalCurrency | null
 }) {
   const { t, lang, pick } = useT()
   const open = useApp((s) => s.open) === id
   const toggle = useApp((s) => s.toggleVariety)
   const commit = useApp((s) => s.commitVariety)
+  const planCropAction = useApp((s) => s.planCrop)
+  const setPlannedVariety = useParcels((s) => s.setPlannedVariety)
   const budBand = useApp((s) => s.bud)
+
+  /**
+   * One button, the right plan either way: with a real parcel the variety is
+   * planned exactly like a shortlist crop (frozen snapshot, generic calendar);
+   * without one the scripted demo commit keeps the prototype narrative.
+   */
+  const planHarvest = () => {
+    if (!parcel || !local) {
+      commit(
+        id,
+        lang === "ar"
+          ? "أُنشئت الخطة والميزانية — 34 مهمة حتى الحصاد"
+          : "Season plan + budget created — 34 tasks to harvest"
+      )
+      return
+    }
+    const cropId = VARIETY_CROP[id]
+    const envelope = ECOCROP.find((e) => e.id === cropId)
+    const area = parcel.areaHa
+    const usedPrice = econ
+      ? econ.price.usdPerKg
+      : (envelope?.refPriceUsdPerKg ?? 0)
+    const revenue = v.yieldTHa * 1000 * area * usedPrice
+    const cost = (SEASON_BUDGET[id][1] / DEMO_AREA_HA) * area
+    planCropAction(
+      {
+        cropId,
+        name: v.name,
+        cycleDays: v.cycle,
+        // Demo water is m³ over the 0.8 ha demo parcel; the envelope's mm
+        // figure is the real thing when we have it.
+        waterNeedMm:
+          envelope?.waterNeedMm ?? Math.round(v.water / DEMO_AREA_HA / 10),
+        areaHa: area,
+        revenueUsd: revenue,
+        costUsd: cost,
+        usedPriceUsd: usedPrice,
+        priceLive: econ != null,
+        currency: local.code,
+        fxRate: local.rate,
+        parcelName: parcel.name,
+      },
+      pick(
+        `Season plan created — ${v.name} to harvest in ~${v.cycle} days`,
+        `Plan de saison créé — ${v.name}, récolte dans ~${v.cycle} jours`,
+        `أُنشئت خطة الموسم — ${v.name}، الحصاد بعد ~${v.cycle} يومًا`
+      )
+    )
+    setPlannedVariety(parcel.id, cropId)
+  }
 
   // Live economics need BOTH a price series and a real area; with either one
   // missing the card renders the scripted demo figures untouched.
@@ -283,16 +343,9 @@ function VarietyCard({
                   variant="leaf"
                   size="md"
                   className="flex-1 rounded-[10px]"
-                  onClick={() =>
-                    commit(
-                      id,
-                      lang === "ar"
-                        ? "أُنشئت الخطة والميزانية — 34 مهمة حتى الحصاد"
-                        : "Season plan + budget created — 34 tasks to harvest"
-                    )
-                  }
+                  onClick={planHarvest}
                 >
-                  {t.decCommit}
+                  {t.decPlanHarvest}
                 </Button>
                 <Button variant="outline" size="md" className="rounded-[10px]">
                   {t.decCompare}
@@ -301,15 +354,28 @@ function VarietyCard({
             </div>
           </motion.div>
         ) : (
-          <button
+          <div
             key="peek"
-            type="button"
-            onClick={() => toggle(id)}
-            className="flex w-full cursor-pointer justify-between border-t border-[#f0ecdd] px-3.5 py-2 text-[12px] font-bold text-water"
+            className="flex items-center gap-2 border-t border-[#f0ecdd] px-3.5 py-2"
           >
-            <span>{t.decWhy}</span>
-            <span>▾</span>
-          </button>
+            {/* Reachable on press — not buried below the factor bars. */}
+            <Button
+              variant="leaf"
+              size="sm"
+              className="flex-1 rounded-[8px]"
+              onClick={planHarvest}
+            >
+              {t.decPlanHarvest}
+            </Button>
+            <button
+              type="button"
+              onClick={() => toggle(id)}
+              className="flex cursor-pointer items-center gap-1.5 px-2 py-1.5 text-[12px] font-bold text-water"
+            >
+              <span>{t.decWhy}</span>
+              <span>▾</span>
+            </button>
+          </div>
         )}
       </AnimatePresence>
     </motion.div>
@@ -347,7 +413,11 @@ export function DecideScreen() {
     () => new Map(matches.map((m) => [m.id, m])),
     [matches]
   )
-  const hasReal = matches.length > 0
+  // "Real" means real CARDS: an analysis whose every match is blocked would
+  // render an empty shortlist, so those parcels fall back to the variety
+  // cards — which can still plan a real harvest on the parcel.
+  const shortlist = useMemo(() => selectShortlist(matches), [matches])
+  const hasReal = shortlist.length > 0
 
   // Market prices for whichever cards will actually render: with a real
   // analysis, THIS parcel's own top-8 shortlist crops (EU portal or FPMA,
@@ -355,9 +425,10 @@ export function DecideScreen() {
   // without one, the five demo varieties' crops. Every miss is a null, and
   // the card that misses falls back to its indicative or demo price.
   const countryCode = analysis?.place?.countryCode ?? null
+  const local = useLocalCurrency(countryCode)
   const { prices } = useMarketPrices(
     countryCode,
-    hasReal ? selectShortlist(matches).map((m) => m.id) : PRICEABLE
+    hasReal ? shortlist.map((m) => m.id) : PRICEABLE
   )
   const anyPrice = Object.values(prices).some((p) => p != null)
   // A price only RENDERS live when a real area exists to scale it against.
@@ -467,7 +538,9 @@ export function DecideScreen() {
               v={VARIETIES[id]}
               real={matchByCrop.get(VARIETY_CROP[id])}
               price={prices[VARIETY_CROP[id]] ?? null}
-              areaHa={parcel && hasReal ? parcel.areaHa : null}
+              areaHa={parcel && analysis ? parcel.areaHa : null}
+              parcel={analysis ? parcel : null}
+              local={local}
             />
           ))}
         </motion.div>

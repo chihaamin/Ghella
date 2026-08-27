@@ -309,6 +309,39 @@ function ShortlistCard({
   const waterMath =
     pick("Water: needs ", "Water: needs ", "الماء: يحتاج ") + `${fmt(econ.waterM3)} m³`
 
+  /**
+   * Snapshot the EXACT figures this card is showing — the calendar must
+   * render the numbers the farmer said yes to, never a later price refresh.
+   * Shared by the always-visible collapsed action and the expanded panel.
+   */
+  const planThisCrop = () => {
+    planCrop(
+      {
+        cropId: crop.id,
+        name: crop.name,
+        cycleDays: crop.cycleDays,
+        waterNeedMm: crop.waterNeedMm,
+        areaHa: parcel.areaHa,
+        revenueUsd: econ.revenue,
+        costUsd: econ.cost,
+        usedPriceUsd: econ.usedPrice,
+        priceLive: !!econ.live,
+        currency: local.code,
+        fxRate: local.rate,
+        parcelName: parcel.name,
+      },
+      pick(
+        `Season plan created — ${crop.name} to harvest in ~${crop.cycleDays} days`,
+        `Plan de saison créé — ${crop.name}, récolte dans ~${crop.cycleDays} jours`,
+        `أُنشئت خطة الموسم — ${crop.name}، الحصاد بعد ~${crop.cycleDays} يومًا`
+      )
+    )
+    // Rotation and recommendations read the committed crop off the parcel
+    // itself, not the calendar's snapshot.
+    setPlannedVariety(parcel.id, crop.id)
+  }
+
+
   return (
     <motion.div
       variants={fadeUp}
@@ -418,35 +451,7 @@ function ShortlistCard({
                   variant="leaf"
                   size="md"
                   className="flex-1 rounded-[10px]"
-                  onClick={() => {
-                    // Snapshot the EXACT figures this card is showing — the
-                    // calendar must render the numbers the farmer said yes
-                    // to, never a later price refresh.
-                    planCrop(
-                      {
-                        cropId: crop.id,
-                        name: crop.name,
-                        cycleDays: crop.cycleDays,
-                        waterNeedMm: crop.waterNeedMm,
-                        areaHa: parcel.areaHa,
-                        revenueUsd: econ.revenue,
-                        costUsd: econ.cost,
-                        usedPriceUsd: econ.usedPrice,
-                        priceLive: !!econ.live,
-                        currency: local.code,
-                        fxRate: local.rate,
-                        parcelName: parcel.name,
-                      },
-                      pick(
-                        `Season plan created — ${crop.name} to harvest in ~${crop.cycleDays} days`,
-                        `Plan de saison créé — ${crop.name}, récolte dans ~${crop.cycleDays} jours`,
-                        `أُنشئت خطة الموسم — ${crop.name}، الحصاد بعد ~${crop.cycleDays} يومًا`
-                      )
-                    )
-                    // Rotation and recommendations read the committed crop
-                    // off the parcel itself, not the calendar's snapshot.
-                    setPlannedVariety(parcel.id, crop.id)
-                  }}
+                  onClick={planThisCrop}
                 >
                   {t.decPlanHarvest}
                 </Button>
@@ -457,15 +462,29 @@ function ShortlistCard({
             </div>
           </motion.div>
         ) : (
-          <button
+          <div
             key="peek"
-            type="button"
-            onClick={onToggle}
-            className="flex w-full cursor-pointer justify-between border-t border-[#f0ecdd] px-3.5 py-2 text-[12px] font-bold text-water"
+            className="flex items-center gap-2 border-t border-[#f0ecdd] px-3.5 py-2"
           >
-            <span>{t.decWhy}</span>
-            <span>▾</span>
-          </button>
+            {/* The plan action must be reachable the moment a farmer presses
+                a card — not buried under the factor bars of the open panel. */}
+            <Button
+              variant="leaf"
+              size="sm"
+              className="flex-1 rounded-[8px]"
+              onClick={planThisCrop}
+            >
+              {t.decPlanHarvest}
+            </Button>
+            <button
+              type="button"
+              onClick={onToggle}
+              className="flex cursor-pointer items-center gap-1.5 px-2 py-1.5 text-[12px] font-bold text-water"
+            >
+              <span>{t.decWhy}</span>
+              <span>▾</span>
+            </button>
+          </div>
         )}
       </AnimatePresence>
     </motion.div>
