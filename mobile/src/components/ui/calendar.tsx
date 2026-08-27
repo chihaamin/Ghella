@@ -131,8 +131,11 @@ export function Calendar({
           justifyContent: "space-between",
         }}
       >
+        {/* First child = "previous". Under row-reverse it renders at the
+            inline start (the right), and the glyph mirrors — exactly what
+            react-day-picker does with dir="rtl" on the web. */}
         <Pressable
-          onPress={() => step(isRtl ? 1 : -1)}
+          onPress={() => step(-1)}
           hitSlop={8}
           style={({ pressed }) => ({
             width: 32,
@@ -144,14 +147,14 @@ export function Calendar({
           })}
         >
           <Text style={{ fontFamily: ff.mono.bold, fontSize: 16, color: C.lineDash }}>
-            {"‹"}
+            {isRtl ? "›" : "‹"}
           </Text>
         </Pressable>
         <Text style={{ fontFamily: ff.display.bold, fontSize: 14, color: C.ink }}>
           {names.months[month.getMonth()]} {month.getFullYear()}
         </Text>
         <Pressable
-          onPress={() => step(isRtl ? -1 : 1)}
+          onPress={() => step(1)}
           hitSlop={8}
           style={({ pressed }) => ({
             width: 32,
@@ -163,7 +166,7 @@ export function Calendar({
           })}
         >
           <Text style={{ fontFamily: ff.mono.bold, fontSize: 16, color: C.lineDash }}>
-            {"›"}
+            {isRtl ? "‹" : "›"}
           </Text>
         </Pressable>
       </View>

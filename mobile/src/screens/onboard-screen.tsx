@@ -90,12 +90,14 @@ function AnalysisBar() {
   const progress = useRef(new Animated.Value(0)).current
 
   useEffect(() => {
-    Animated.timing(progress, {
+    const anim = Animated.timing(progress, {
       toValue: 1,
       duration: 2300,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false, // width animation
-    }).start()
+    })
+    anim.start()
+    return () => anim.stop()
   }, [progress])
 
   return (
@@ -594,6 +596,7 @@ function StepRefine() {
             {SOILS.map((s, i) => (
               <Pressable
                 key={s.name}
+                accessibilityRole="button"
                 onPress={() => {
                   farmerTouched.current = true
                   set({ soil: i })
@@ -694,7 +697,12 @@ function StepRefine() {
                 )}
               </Text>
             </View>
-            <Pressable onPress={() => setChangingSoil(true)} style={{ flexShrink: 0 }}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setChangingSoil(true)}
+              hitSlop={8}
+              style={{ flexShrink: 0 }}
+            >
               <Text style={{ fontFamily: ff.sans.bold, fontSize: 12, color: C.leaf }}>
                 {pick("Not right?", "Pas ça ?", "غير صحيح؟")}
               </Text>
@@ -720,6 +728,7 @@ function StepRefine() {
           {WATER_SOURCES.map((s, i) => (
             <Pressable
               key={s.name}
+              accessibilityRole="button"
               onPress={() => set({ wsrc: i })}
               style={{
                 width: "48.5%",
@@ -793,6 +802,7 @@ function StepRefine() {
           {SALINITY.map((s, i) => (
             <Pressable
               key={s.name}
+              accessibilityRole="button"
               onPress={() => set({ sal: i })}
               style={{
                 flex: 1,
@@ -836,6 +846,7 @@ function StepRefine() {
           {BUDGET_BANDS.map((b, i) => (
             <Pressable
               key={b.label}
+              accessibilityRole="button"
               onPress={() => set({ bud: i })}
               style={{
                 width: "48.5%",
@@ -986,6 +997,7 @@ function StepDone() {
           {PARCEL_COLORS.map((v, i) => (
             <Pressable
               key={v}
+              accessibilityRole="button"
               onPress={() => {
                 set({ pcolor: i })
                 // The live map draws parcel.color — keep the real one in sync.

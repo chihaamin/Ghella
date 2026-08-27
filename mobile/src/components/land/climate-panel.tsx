@@ -78,6 +78,9 @@ export function ClimatePanel({ climate }: { climate: ClimateNormals }): JSX.Elem
   const maxRain = Math.max(1, ...climate.monthly.map((m) => m.rainMm))
 
   const row = isRtl ? ("row-reverse" as const) : ("row" as const)
+  // The web's dir="rtl" right-aligned the stat tiles' text for free; the
+  // Stat primitive is direction-blind, so the alignment rides in as a style.
+  const alignStart = { textAlign: isRtl ? "right" : "left" } as const
 
   return (
     <FadeUp
@@ -123,22 +126,30 @@ export function ClimatePanel({ climate }: { climate: ClimateNormals }): JSX.Elem
           style={{ backgroundColor: C.chip2, width: "48.7%" }}
           label={t.ldAnnualRain}
           value={`${fmt(climate.annualRainMm)} mm`}
+          labelStyle={alignStart}
+          valueStyle={alignStart}
         />
         <Stat
           style={{ backgroundColor: C.chip2, width: "48.7%" }}
           label={t.ldEt0}
           value={`${fmt(climate.annualEt0Mm)} mm`}
+          labelStyle={alignStart}
+          valueStyle={alignStart}
         />
         <Stat
           style={{ backgroundColor: C.chip2, width: "48.7%" }}
           label={t.ldSunHours}
           // Rounded to tens — the trailing digit of "3 187 h" is noise.
           value={`${fmt(Math.round(climate.sunHoursPerYear / 10) * 10)} h`}
+          labelStyle={alignStart}
+          valueStyle={alignStart}
         />
         <Stat
           style={{ backgroundColor: C.chip2, width: "48.7%" }}
           label={t.ldGdd}
           value={`${fmt(climate.gddBase10)} °C·d`}
+          labelStyle={alignStart}
+          valueStyle={alignStart}
         />
       </View>
 

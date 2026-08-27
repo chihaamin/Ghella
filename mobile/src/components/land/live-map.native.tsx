@@ -34,6 +34,12 @@ const NEUTRAL_REGION: Region = {
   longitudeDelta: 360 / 2 ** NEUTRAL_ZOOM,
 }
 
+/**
+ * The web map's `fitBounds(..., { maxZoom: 17 })`: never frame tighter than a
+ * zoom-17 viewport, so a single tiny parcel can't zoom past the imagery.
+ */
+const MIN_FIT_DELTA = 360 / 2 ** 17
+
 /** `[lat, lng]` tuple → the `{latitude, longitude}` react-native-maps wants. */
 function toCoord([latitude, longitude]: LatLng): {
   latitude: number
@@ -134,6 +140,26 @@ export function LiveLandMap({
       map.animateToRegion(NEUTRAL_REGION)
       return
     }
+
+    // The web capped the fit at zoom 17 so one tiny parcel never zooms past
+    // the imagery. fitToCoordinates has no such cap, so when the land spans
+    // less than a z17 viewport, frame its centre at that zoom instead.
+    const lats = points.map((p) => p[0])
+    const lngs = points.map((p) => p[1])
+    const latMin = Math.min(...lats)
+    const latMax = Math.max(...lats)
+    const lngMin = Math.min(...lngs)
+    const lngMax = Math.max(...lngs)
+    if (latMax - latMin < MIN_FIT_DELTA && lngMax - lngMin < MIN_FIT_DELTA) {
+      map.animateToRegion({
+        latitude: (latMin + latMax) / 2,
+        longitude: (lngMin + lngMax) / 2,
+        latitudeDelta: MIN_FIT_DELTA,
+        longitudeDelta: MIN_FIT_DELTA,
+      })
+      return
+    }
+
     map.fitToCoordinates(points.map(toCoord), {
       edgePadding: { top: 24, right: 24, bottom: 24, left: 24 },
       animated: true,
@@ -160,6 +186,7 @@ export function LiveLandMap({
           if (parcel.points.length < 3) return null
           const isParent = splitPreview?.parcelId === parcel.id
           const isSelected = parcel.id === selectedId
+          const label = `${parcel.name} · ${parcel.areaHa.toFixed(1)} ha`
           return (
             <Fragment key={parcel.id}>
               <Polygon
@@ -181,8 +208,11 @@ export function LiveLandMap({
                   showing. */}
               {!isParent && (!crowded || isSelected) && (
                 <LabelMarker
+                  // `tracksViewChanges={false}` snapshots the chip once, so a
+                  // rename or re-measured area must remount it to show.
+                  key={label}
                   at={polygonCentroid(parcel.points)}
-                  text={`${parcel.name} · ${parcel.areaHa.toFixed(1)} ha`}
+                  text={label}
                   onPress={() => onSelect(parcel.id)}
                 />
               )}
@@ -194,6 +224,7 @@ export function LiveLandMap({
           ? splitPreview.rings.map((ring, i) => {
               if (ring.length < 3) return null
               const letter = String.fromCharCode(65 + (i % 26))
+              const label = `${letter} · ${polygonAreaHa(ring).toFixed(1)} ha`
               return (
                 <Fragment key={`split-${i}`}>
                   <Polygon
@@ -206,8 +237,11 @@ export function LiveLandMap({
                   {/* On the web a click on a letter chip fell through to the
                       parent polygon; forward the same selection here. */}
                   <LabelMarker
+                    // Remount when the ring's area moves — the snapshot chip
+                    // would otherwise keep the old number.
+                    key={label}
                     at={polygonCentroid(ring)}
-                    text={`${letter} · ${polygonAreaHa(ring).toFixed(1)} ha`}
+                    text={label}
                     onPress={() => onSelect(splitPreview.parcelId)}
                   />
                 </Fragment>

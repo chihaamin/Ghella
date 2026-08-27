@@ -26,7 +26,6 @@ import { dateOfIso, isoOfDate } from "@/hooks/use-calendar"
 import { useT } from "@/i18n/use-t"
 import { C } from "@/lib/colors"
 import { recommendedPrep } from "@/lib/generic-plan"
-import { animateLayout } from "@/lib/motion"
 import type { PlannedCropPlan, PrepStepId } from "@/store/app-store"
 import type { CropCategory } from "@/types/land"
 import { useFF } from "@/theme/fonts"
@@ -163,13 +162,16 @@ export function PlanSetupSheet(props: {
                 {t.psSoilQ}
               </SectionLabel>
               <View style={{ flexDirection: rowDir, gap: 8 }}>
+                {/* No LayoutAnimation here, deliberately: this press inserts
+                    the prep-step chips right where the note/Q3/Create sit,
+                    and LayoutAnimation inside a Modal leaves stale hitboxes
+                    while things slide — taps on the fresh chips get swallowed
+                    (observed live as "ticks not registering"). The web sheet
+                    pops the section in with no animation; match it. */}
                 {[false, true].map((yes) => (
                   <Pressable
                     key={String(yes)}
-                    onPress={() => {
-                      animateLayout()
-                      setSoilPrepared(yes)
-                    }}
+                    onPress={() => setSoilPrepared(yes)}
                     style={{
                       flex: 1,
                       borderRadius: 11,
@@ -206,6 +208,9 @@ export function PlanSetupSheet(props: {
                     <Pressable
                       key={step}
                       onPress={() => toggleStep(step)}
+                      // The chips run under the 44pt touch target; the wrap
+                      // gap is 6, so 3 a side meets the neighbour exactly.
+                      hitSlop={{ top: 3, bottom: 3, left: 3, right: 3 }}
                       style={{
                         borderRadius: 10,
                         borderWidth: 2.5,
@@ -277,13 +282,12 @@ export function PlanSetupSheet(props: {
                 {t.psWhenQ}
               </SectionLabel>
               <View style={{ flexDirection: rowDir, gap: 8 }}>
+                {/* Same no-LayoutAnimation rule as Q1: "pick" reveals the
+                    calendar above the Create button. */}
                 {whenChips.map((chip) => (
                   <Pressable
                     key={chip.id}
-                    onPress={() => {
-                      animateLayout()
-                      setWhenChoice(chip.id)
-                    }}
+                    onPress={() => setWhenChoice(chip.id)}
                     style={{
                       flex: 1,
                       borderRadius: 10,

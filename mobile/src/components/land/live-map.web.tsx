@@ -114,11 +114,21 @@ export function LiveLandMap({
       zoomControl: false,
       attributionControl: false,
     })
+    // The web original's `.gh-map` stylesheet: dark ground under the tiles
+    // (leaflet's own CSS paints #ddd otherwise), mono 9px attribution.
+    map.getContainer().style.background = "#2c3522"
+
     L.tileLayer(TILES, { maxZoom: 19 }).addTo(map)
-    L.control
-      .attribution({ prefix: false, position: "bottomleft" })
-      .addAttribution("Esri World Imagery")
-      .addTo(map)
+    const attribution = L.control.attribution({
+      prefix: false,
+      position: "bottomleft",
+    })
+    attribution.addAttribution("Esri World Imagery").addTo(map)
+    const attEl = attribution.getContainer()
+    if (attEl) {
+      attEl.style.fontFamily = `${F.mono.regular}, monospace`
+      attEl.style.fontSize = "9px"
+    }
 
     parcelLayerRef.current = L.layerGroup().addTo(map)
     previewLayerRef.current = L.layerGroup().addTo(map)

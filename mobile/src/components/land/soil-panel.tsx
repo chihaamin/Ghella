@@ -87,6 +87,9 @@ export function SoilPanel({
   const hasStats = soil.ph !== null || soil.socGkg !== null || waterHolding !== null
 
   const row = isRtl ? ("row-reverse" as const) : ("row" as const)
+  // The web's dir="rtl" right-aligned the stat tiles' text for free; the
+  // Stat primitive is direction-blind, so the alignment rides in as a style.
+  const alignStart = { textAlign: isRtl ? "right" : "left" } as const
 
   return (
     <FadeUp
@@ -156,19 +159,22 @@ export function SoilPanel({
             style={{ flex: 1, backgroundColor: C.chip2 }}
             label={t.ldPh}
             value={soil.ph !== null ? soil.ph.toFixed(1) : "—"}
-            valueStyle={{ fontSize: 15 }}
+            labelStyle={alignStart}
+            valueStyle={[{ fontSize: 15 }, alignStart]}
           />
           <Stat
             style={{ flex: 1, backgroundColor: C.chip2 }}
             label={t.ldSoc}
             value={soil.socGkg !== null ? `${soil.socGkg} g/kg` : "—"}
-            valueStyle={{ fontSize: 15 }}
+            labelStyle={alignStart}
+            valueStyle={[{ fontSize: 15 }, alignStart]}
           />
           <Stat
             style={{ flex: 1, backgroundColor: C.chip2 }}
             label={t.ldWaterHolding}
             value={waterHolding !== null ? `${waterHolding} mm/m` : "—"}
-            valueStyle={{ fontSize: 15 }}
+            labelStyle={alignStart}
+            valueStyle={[{ fontSize: 15 }, alignStart]}
           />
         </View>
       )}

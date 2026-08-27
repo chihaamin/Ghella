@@ -66,15 +66,18 @@ export function ParcelMap(_props: ParcelMapProps) {
     setState({ mapCenterTxt: centerTxt(lat, lng) })
   }, [setState])
 
+  const addCorner = (c: { latitude: number; longitude: number }) => {
+    ptsRef.current.push([c.latitude, c.longitude])
+    bump()
+    setPts(ptsRef.current.slice())
+  }
+
   const onMapPress = (e: MapPressEvent) => {
     if (draggingRef.current) return
     // Android reports corner taps through onPress too; leaflet markers
     // swallowed those clicks, so a corner tap must not drop a new corner.
     if (e.nativeEvent.action === "marker-press") return
-    const c = e.nativeEvent.coordinate
-    ptsRef.current.push([c.latitude, c.longitude])
-    bump()
-    setPts(ptsRef.current.slice())
+    addCorner(e.nativeEvent.coordinate)
   }
 
   const onCornerDragStart = () => {
@@ -148,16 +151,20 @@ export function ParcelMap(_props: ParcelMapProps) {
         onPress={onMapPress}
         onRegionChangeComplete={onRegionChangeComplete}
       >
-        <Polygon
-          coordinates={ptsRef.current.map(([lat, lng]) => ({
-            latitude: lat,
-            longitude: lng,
-          }))}
-          strokeColor={C.leafLight}
-          strokeWidth={3}
-          // C.leafLight at the web polygon's 0.3 fill opacity.
-          fillColor="rgba(159, 220, 126, 0.3)"
-        />
+        {/* Leaflet took an empty polygon in stride; native map polygons are
+            only created once there is a coordinate to hold. */}
+        {ptsRef.current.length > 0 && (
+          <Polygon
+            coordinates={ptsRef.current.map(([lat, lng]) => ({
+              latitude: lat,
+              longitude: lng,
+            }))}
+            strokeColor={C.leafLight}
+            strokeWidth={3}
+            // C.leafLight at the web polygon's 0.3 fill opacity.
+            fillColor="rgba(159, 220, 126, 0.3)"
+          />
+        )}
         {ptsRef.current.map(([lat, lng], i) => (
           <Marker
             key={`corner-${i}`}
@@ -177,6 +184,14 @@ export function ParcelMap(_props: ParcelMapProps) {
             coordinate={{ latitude: locatedAt[0], longitude: locatedAt[1] }}
             anchor={{ x: 0.5, y: 0.5 }}
             tracksViewChanges={false}
+            // The web dot was `interactive: false`, so a click on it fell
+            // through to the map and dropped a corner there — a farmer
+            // standing on a corner taps their own dot. Native markers
+            // swallow the tap, so forward it as the corner it meant.
+            onPress={(e) => {
+              if (draggingRef.current) return
+              addCorner(e.nativeEvent.coordinate)
+            }}
           >
             <View style={styles.hereHalo}>
               <View style={styles.hereDot} />

@@ -704,7 +704,7 @@ function StepPlan() {
             gap: 8,
           }}
         >
-          <View style={{ flexDirection: "column", gap: 2 }}>
+          <View style={{ flexShrink: 1, flexDirection: "column", gap: 2 }}>
             <Text
               style={{
                 fontFamily: ff.display.bold,
@@ -1132,6 +1132,33 @@ function StepAdded() {
   )
 }
 
+/** One progress segment — the web's `motion.div animate={{backgroundColor}}`. */
+function ProgressSeg({ active }: { active: boolean }) {
+  const progress = useRef(new Animated.Value(active ? 1 : 0)).current
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: active ? 1 : 0,
+      duration: 250,
+      useNativeDriver: false,
+    }).start()
+  }, [active, progress])
+
+  return (
+    <Animated.View
+      style={{
+        height: 4,
+        flex: 1,
+        borderRadius: 2,
+        backgroundColor: progress.interpolate({
+          inputRange: [0, 1],
+          outputRange: [C.chip, C.sunDeep],
+        }),
+      }}
+    />
+  )
+}
+
 export function DiseaseScreen() {
   const dz = useApp((s) => s.dz)
   const { isRtl } = useT()
@@ -1140,15 +1167,7 @@ export function DiseaseScreen() {
     <View style={{ flexDirection: "column", gap: 13, paddingTop: 4 }}>
       <View style={{ flexDirection: isRtl ? "row-reverse" : "row", gap: 5 }}>
         {[0, 1, 2, 3, 4].map((i) => (
-          <View
-            key={i}
-            style={{
-              height: 4,
-              flex: 1,
-              borderRadius: 2,
-              backgroundColor: i <= dz ? C.sunDeep : C.chip,
-            }}
-          />
+          <ProgressSeg key={i} active={i <= dz} />
         ))}
       </View>
 

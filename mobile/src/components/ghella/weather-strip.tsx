@@ -1,3 +1,4 @@
+import { useRef } from "react"
 import { ScrollView, Text, View, type StyleProp, type ViewStyle } from "react-native"
 
 import { forecast as demoForecast, type WeatherDay } from "@/data/weather"
@@ -28,6 +29,7 @@ export function WeatherStrip({
 }) {
   const { lang, isRtl } = useT()
   const ff = useFF()
+  const scrollRef = useRef<ScrollView>(null)
   const rain = useApp((s) => s.rain)
   const frost = useApp((s) => s.frost)
   const { forecast: live } = useForecast(latlng)
@@ -56,8 +58,16 @@ export function WeatherStrip({
 
   return (
     <ScrollView
+      ref={scrollRef}
       horizontal
       showsHorizontalScrollIndicator={false}
+      // Web relied on dir=rtl: the browser starts an RTL scroller at its
+      // RIGHT edge, so "today" (the row-reversed first tile) is on screen.
+      // A native ScrollView always starts at the left edge, which in RTL is
+      // the END of the week — jump to the right edge to match the web.
+      onContentSizeChange={() => {
+        if (isRtl) scrollRef.current?.scrollToEnd({ animated: false })
+      }}
       style={sx({ marginHorizontal: -16 }, style)}
       contentContainerStyle={{
         flexDirection: isRtl ? "row-reverse" : "row",

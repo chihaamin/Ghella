@@ -125,7 +125,7 @@ export function Button({
         style,
       ]}
     >
-      {typeof children === "string" || typeof children === "number" ? (
+      {isTextual(children) ? (
         <Text
           numberOfLines={1}
           style={[
@@ -140,6 +140,17 @@ export function Button({
       )}
     </Pressable>
   )
+}
+
+/**
+ * `{expr} d` style children arrive as an ARRAY of strings — those must land in
+ * a Text too, or React Native throws "Text strings must be rendered within a
+ * <Text> component" at runtime.
+ */
+function isTextual(children: ReactNode): boolean {
+  if (typeof children === "string" || typeof children === "number") return true
+  if (Array.isArray(children)) return children.every(isTextual)
+  return false
 }
 
 /** The text style a non-string Button child should give its own label. */

@@ -72,7 +72,7 @@ export function SourcesNote({
             <Text style={{ fontFamily: ff.sans.bold, fontSize: 12, color: SUN_INK_2 }}>
               {t.ldSourceIssues}
             </Text>
-            {stamp && (
+            {stamp !== null && (
               <Text
                 style={{
                   fontFamily: ff.mono.regular,

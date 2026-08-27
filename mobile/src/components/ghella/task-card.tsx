@@ -108,7 +108,7 @@ export function TaskCard({ task }: { task: Task }) {
           <Text style={{ fontFamily: ff.mono.bold, fontSize: 10.5, color: C.muted }}>
             {task.parcel}
           </Text>
-          {task.moved && (
+          {task.moved ? (
             <View
               style={{
                 borderRadius: 6,
@@ -121,8 +121,8 @@ export function TaskCard({ task }: { task: Task }) {
                 {task.moved}
               </Text>
             </View>
-          )}
-          {task.cost && (
+          ) : null}
+          {task.cost ? (
             <Text
               numberOfLines={1}
               style={{
@@ -134,7 +134,7 @@ export function TaskCard({ task }: { task: Task }) {
             >
               {task.cost}
             </Text>
-          )}
+          ) : null}
         </View>
 
         <Text
@@ -149,13 +149,13 @@ export function TaskCard({ task }: { task: Task }) {
           {task.title}
         </Text>
 
-        {task.calc && (
+        {task.calc ? (
           <Text style={sx(alignText, { fontFamily: ff.mono.bold, fontSize: 12, color })}>
             {task.calc}
           </Text>
-        )}
+        ) : null}
 
-        {task.why && (
+        {task.why ? (
           <Text
             style={sx(alignText, {
               fontFamily: ff.sans.regular,
@@ -166,9 +166,9 @@ export function TaskCard({ task }: { task: Task }) {
           >
             {task.why}
           </Text>
-        )}
+        ) : null}
 
-        {task.cancelNote && (
+        {task.cancelNote ? (
           <FadeUp>
             <View
               style={sx(row, {
@@ -186,7 +186,7 @@ export function TaskCard({ task }: { task: Task }) {
               </Text>
             </View>
           </FadeUp>
-        )}
+        ) : null}
 
         <View style={sx(row, { gap: 7, paddingTop: 2 })}>
           <Pressable

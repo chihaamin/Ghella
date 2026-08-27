@@ -129,9 +129,12 @@ export function RecommendationsPanel({
                 {rec.body}
               </Text>
 
-              {(rec.impact || (rec.actionLabel && rec.action)) && (
+              {/* Boolean-coerced: impact/actionLabel are strings, and a bare
+                  "" leaking out of `&&` would be a text node inside a View —
+                  an instant native crash. */}
+              {!!(rec.impact || (rec.actionLabel && rec.action)) && (
                 <View style={[row, { alignItems: "center", gap: 8, paddingTop: 2 }]}>
-                  {rec.actionLabel && rec.action && (
+                  {!!(rec.actionLabel && rec.action) && (
                     <Button
                       variant={actionVariant(rec.kind)}
                       size="sm"
@@ -140,7 +143,7 @@ export function RecommendationsPanel({
                       {rec.actionLabel}
                     </Button>
                   )}
-                  {rec.impact && (
+                  {!!rec.impact && (
                     <Badge
                       variant="neutral"
                       size="xs"

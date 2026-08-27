@@ -50,6 +50,17 @@ const SIZES: Record<
   md: { box: { paddingHorizontal: 10, paddingVertical: 5 }, fontSize: 11 },
 }
 
+/**
+ * `{expr} d` style children arrive as an ARRAY of strings — those must land in
+ * a Text too, or React Native throws "Text strings must be rendered within a
+ * <Text> component" at runtime.
+ */
+function isTextual(children: ReactNode): boolean {
+  if (typeof children === "string" || typeof children === "number") return true
+  if (Array.isArray(children)) return children.every(isTextual)
+  return false
+}
+
 export function Badge({
   variant = "neutral",
   size = "sm",
@@ -81,7 +92,7 @@ export function Badge({
         style,
       ]}
     >
-      {typeof children === "string" || typeof children === "number" ? (
+      {isTextual(children) ? (
         <Text
           numberOfLines={1}
           style={[

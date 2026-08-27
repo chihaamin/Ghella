@@ -351,7 +351,10 @@ export function CropMatches({
 
       {crops.length > initial && (
         <Pressable
-          onPress={() => setShowAll((s) => !s)}
+          onPress={() => {
+            animateLayout()
+            setShowAll((s) => !s)
+          }}
           style={{
             alignSelf: "stretch",
             borderTopWidth: 1,

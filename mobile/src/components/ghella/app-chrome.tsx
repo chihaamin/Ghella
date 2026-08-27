@@ -193,6 +193,7 @@ export function BottomNav() {
 
 /** Confirmation toast, floating just above the tab bar. */
 export function Toast() {
+  const { isRtl } = useT()
   const ff = useFF()
   const toastMsg = useApp((s) => s.toastMsg)
 
@@ -210,7 +211,7 @@ export function Toast() {
     >
       <View
         style={{
-          flexDirection: "row",
+          flexDirection: isRtl ? "row-reverse" : "row",
           alignItems: "center",
           gap: 9,
           borderRadius: 12,
@@ -238,6 +239,7 @@ export function Toast() {
             fontFamily: ff.sans.semibold,
             fontSize: 13,
             color: C.surface,
+            textAlign: isRtl ? "right" : "left",
           }}
         >
           {toastMsg}

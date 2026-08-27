@@ -10,7 +10,7 @@ import { MAP_START } from "@/data/onboarding"
 import { useT } from "@/i18n/use-t"
 import { C } from "@/lib/colors"
 import { useApp, type LatLng } from "@/store/app-store"
-import { useFF } from "@/theme/fonts"
+import { F, useFF } from "@/theme/fonts"
 
 import type { ParcelMapProps } from "./parcel-map.types"
 
@@ -112,7 +112,7 @@ export function ParcelMap(_props: ParcelMapProps) {
     attribution.addAttribution("Esri World Imagery").addTo(map)
     const attEl = attribution.getContainer()
     if (attEl) {
-      attEl.style.fontFamily = "SpaceMono_400Regular, monospace"
+      attEl.style.fontFamily = `${F.mono.regular}, monospace`
       attEl.style.fontSize = "9px"
     }
 

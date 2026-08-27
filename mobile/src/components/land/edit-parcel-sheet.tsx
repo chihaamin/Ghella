@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native"
 
 import { SectionLabel } from "@/components/ghella/primitives"
@@ -59,6 +59,21 @@ function ParcelNameInput({
   const ff = useFF()
   const [draft, setDraft] = useState(name)
   const [focused, setFocused] = useState(false)
+
+  // On the web every close path blurs the input first, so commit-on-blur was
+  // enough. Here the Modal can unmount a still-focused input (Android back,
+  // scrim tap with the keyboard already down) without ever firing onBlur —
+  // so the unmount itself also commits. Refs keep the cleanup reading the
+  // latest values; renameParcel is idempotent, so a blur+unmount double
+  // commit is harmless.
+  const latest = useRef({ draft, name, onCommit })
+  latest.current = { draft, name, onCommit }
+  useEffect(() => {
+    return () => {
+      const next = latest.current.draft.trim()
+      if (next && next !== latest.current.name) latest.current.onCommit(next)
+    }
+  }, [])
 
   return (
     <TextInput

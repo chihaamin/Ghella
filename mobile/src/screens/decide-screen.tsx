@@ -364,7 +364,9 @@ function VarietyCard({
         <ScoreDrop id={id} wps={wpsShown} />
       </Pressable>
 
-      {warn && (
+      {/* `warn` can be "" — `&&` would render the empty string as a bare text
+          node inside this View, which native throws on. Ternary to null. */}
+      {warn ? (
         <View
           style={{
             ...row,
@@ -394,7 +396,7 @@ function VarietyCard({
             {warn}
           </Text>
         </View>
-      )}
+      ) : null}
 
       {open ? (
         <View
@@ -646,16 +648,18 @@ export function DecideScreen() {
             <Badge variant="ink" size="md">
               {`${parcel.name} · ${parcel.areaHa.toFixed(1)} ha`}
             </Badge>
-            {analysis?.place?.label && (
+            {/* Ternaries, not `&&`: label is a plain string ("" possible) and
+                a bare "" child of a View crashes native. */}
+            {analysis?.place?.label ? (
               <Badge variant="neutral" size="md">
                 {analysis.place.label.toUpperCase()}
               </Badge>
-            )}
-            {parcel.waterSource && (
+            ) : null}
+            {parcel.waterSource ? (
               <Badge variant="neutral" size="md">
                 {WATER_CHIP[parcel.waterSource]}
               </Badge>
-            )}
+            ) : null}
           </>
         ) : (
           <>
@@ -704,7 +708,9 @@ export function DecideScreen() {
         showsHorizontalScrollIndicator={false}
         style={{ marginHorizontal: -16 }}
         contentContainerStyle={{
-          flexDirection: "row",
+          // Web relied on dir=rtl to flip this row; market-screen's chip row
+          // set the precedent for the native flip.
+          flexDirection: isRtl ? "row-reverse" : "row",
           gap: 6,
           paddingHorizontal: 16,
           paddingVertical: 2,

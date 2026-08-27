@@ -198,6 +198,7 @@ function LiveWeatherCard({
             fontSize: 10,
             letterSpacing: 1.2,
             color: C.sand,
+            textAlign: isRtl ? "right" : "left",
           }}
         >
           {t.ldFeelsIn}
@@ -208,6 +209,7 @@ function LiveWeatherCard({
             fontSize: 24,
             lineHeight: 24,
             color: C.surface,
+            textAlign: isRtl ? "right" : "left",
           }}
         >
           {Math.round(current.tempC)}°
@@ -241,7 +243,9 @@ function LiveWeatherCard({
         </Text>
       </View>
 
-      {placeLabel && (
+      {/* Ternary, not `&&`: an empty-string label would otherwise render a
+          bare "" text node inside this View — a native crash. */}
+      {placeLabel ? (
         <Text
           style={[
             {
@@ -257,7 +261,7 @@ function LiveWeatherCard({
         >
           {placeLabel}
         </Text>
-      )}
+      ) : null}
     </View>
   )
 }
