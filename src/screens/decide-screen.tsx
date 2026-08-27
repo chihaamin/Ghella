@@ -1,6 +1,8 @@
 import { AnimatePresence, motion } from "framer-motion"
+import { useMemo } from "react"
 
 import { WarningIcon } from "@/components/ghella/icons"
+import { CropMatches } from "@/components/land/crop-matches"
 import { SectionLabel, ScreenTitle } from "@/components/ghella/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,10 +16,26 @@ import {
   type Variety,
 } from "@/data/varieties"
 import { useT } from "@/i18n/use-t"
+import { applyIrrigation } from "@/lib/crop-suitability"
 import { C } from "@/lib/colors"
 import { expand, fadeUp, listStagger } from "@/lib/motion"
 import { cn, fmt } from "@/lib/utils"
 import { useApp, type SortKey, type VarietyId } from "@/store/app-store"
+import { selectFocusParcel, useParcels } from "@/store/parcel-store"
+import type { CropMatch } from "@/types/land"
+
+/**
+ * Each demo variety's crop in the EcoCrop table, so a variety card can carry
+ * the REAL agronomic scores for the selected parcel while keeping the demo
+ * price forecast (there is no open wholesale-price API to replace it with).
+ */
+const VARIETY_CROP: Record<VarietyId, string> = {
+  rg: "tomato",
+  fz: "tomato",
+  bk: "sweet-pepper",
+  gr: "onion",
+  mz: "melon",
+}
 
 /** Water-profit score, drawn as a drop filling from the bottom. */
 function ScoreDrop({ id, wps }: { id: VarietyId; wps: number }) {
@@ -77,7 +95,16 @@ function ScoreDrop({ id, wps }: { id: VarietyId; wps: number }) {
   )
 }
 
-function VarietyCard({ id, v }: { id: VarietyId; v: Variety }) {
+function VarietyCard({
+  id,
+  v,
+  real,
+}: {
+  id: VarietyId
+  v: Variety
+  /** The REAL match for this variety's crop on the selected parcel, when one exists. */
+  real?: CropMatch
+}) {
   const { t, lang, pick } = useT()
   const open = useApp((s) => s.open) === id
   const toggle = useApp((s) => s.toggleVariety)
@@ -91,8 +118,18 @@ function VarietyCard({ id, v }: { id: VarietyId; v: Variety }) {
     ? `Inputs ≈ $${fmt(inputCost)} — above your ${band.label} budget`
     : ""
 
-  const warn = budgetWarn || v.warn
-  const severe = Boolean(budgetWarn) || v.warnLvl === "red"
+  // With a real analysis the card warns from the parcel's actual blockers
+  // (frost calendar, heat, disease-wet); the scripted demo warning only
+  // survives when no analysis exists to replace it.
+  const realWarn = real ? (real.blockers[0] ?? "") : ""
+  const warn = budgetWarn || (real ? realWarn : v.warn)
+  const severe = Boolean(budgetWarn) || (real ? Boolean(realWarn) : v.warnLvl === "red")
+
+  // Same rule for the "why this score" bars: the parcel's factors, or the
+  // demo triples as the deep-link fallback.
+  const bars = real
+    ? real.factors.map((f) => ({ k: f.label, n: Math.round(f.score), note: f.note }))
+    : v.bars
 
   const plantWord = pick("Plant within ", "Planter sous ", "ازرع خلال ")
   const cycleWord = pick("cycle ", "cycle ", "دورة ")
@@ -190,7 +227,7 @@ function VarietyCard({ id, v }: { id: VarietyId; v: Variety }) {
             <div className="flex flex-col gap-2.5 px-3.5 py-3">
               <SectionLabel>{t.decWhy}</SectionLabel>
 
-              {v.bars.map((b) => {
+              {bars.map((b) => {
                 const strong = b.n >= 75
                 const mid = b.n >= 55
                 const color = strong ? C.leaf : mid ? C.sun : C.clay
@@ -257,33 +294,99 @@ function VarietyCard({ id, v }: { id: VarietyId; v: Variety }) {
   )
 }
 
+/** Uppercased chip label for a stated water source. */
+const WATER_CHIP: Record<string, string> = {
+  drip: "DRIP",
+  sprinkler: "SPRINKLER",
+  flood: "FLOOD / FURROW",
+  rainfed: "RAINFED",
+}
+
 export function DecideScreen() {
-  const { t, lang } = useT()
+  const { t, lang, pick } = useT()
   const sort = useApp((s) => s.sort)
   const set = useApp((s) => s.set)
   const budBand = useApp((s) => s.bud)
 
+  // The parcel this screen decides FOR. Everything real hangs off its
+  // analysis; without one (prototype deep links, analysis still running) the
+  // screen falls back to the scripted demo wholesale.
+  const parcel = useParcels(selectFocusParcel)
+  const analysis = parcel?.analysis ?? null
+
+  // Stored matches assume rain-fed; a stated water source lifts the rain
+  // constraint at read time. Rain-fed and unstated both read the sky as-is.
+  const irrigated = parcel?.waterSource != null && parcel.waterSource !== "rainfed"
+  const matches = useMemo(
+    () => (analysis ? applyIrrigation(analysis.crops, irrigated) : []),
+    [analysis, irrigated]
+  )
+  const matchByCrop = useMemo(
+    () => new Map(matches.map((m) => [m.id, m])),
+    [matches]
+  )
+  const hasReal = matches.length > 0
+
   const labels = sortLabels(lang)
   const order = SORT_ORDERS[sort]
 
+  const title =
+    parcel && hasReal
+      ? pick(
+          `What should ${parcel.name} grow?`,
+          `Que planter sur ${parcel.name} ?`,
+          `ماذا تزرع ${parcel.name}؟`
+        )
+      : t.decTitle
+
   return (
     <div className="flex flex-col gap-3 pt-1">
-      <ScreenTitle>{t.decTitle}</ScreenTitle>
+      <ScreenTitle>{title}</ScreenTitle>
 
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge variant="ink" size="md">
-          {t.pNorth} · 0.8 ha
-        </Badge>
-        <Badge variant="neutral" size="md">
-          {t.decWell}
-        </Badge>
-        <Badge variant="neutral" size="md">
-          {t.decSeason}
-        </Badge>
+        {parcel && hasReal ? (
+          <>
+            <Badge variant="ink" size="md">
+              {parcel.name} · {parcel.areaHa.toFixed(1)} ha
+            </Badge>
+            {analysis?.place?.label && (
+              <Badge variant="neutral" size="md">
+                {analysis.place.label.toUpperCase()}
+              </Badge>
+            )}
+            {parcel.waterSource && (
+              <Badge variant="neutral" size="md">
+                {WATER_CHIP[parcel.waterSource]}
+              </Badge>
+            )}
+          </>
+        ) : (
+          <>
+            <Badge variant="ink" size="md">
+              {t.pNorth} · 0.8 ha
+            </Badge>
+            <Badge variant="neutral" size="md">
+              {t.decWell}
+            </Badge>
+            <Badge variant="neutral" size="md">
+              {t.decSeason}
+            </Badge>
+          </>
+        )}
         <Badge variant="sunOutline" size="md">
           BUDGET {BUDGET_BANDS[budBand].label.toUpperCase()}
         </Badge>
       </div>
+
+      {/* The parcel's own ranked matches — climate, soil, region and frost
+          calendar of THIS land, before any variety economics. */}
+      {hasReal && (
+        <div className="rounded-[14px] border border-line bg-card p-3.5">
+          <CropMatches crops={matches} initial={4} />
+        </div>
+      )}
+
+      {hasReal && <SectionLabel className="pt-1">{t.decShortlist}</SectionLabel>}
 
       <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 py-0.5">
         {(Object.keys(SORT_ORDERS) as SortKey[]).map((k) => (
@@ -311,7 +414,12 @@ export function DecideScreen() {
         className="flex flex-col gap-[11px]"
       >
         {order.map((id) => (
-          <VarietyCard key={id} id={id} v={VARIETIES[id]} />
+          <VarietyCard
+            key={id}
+            id={id}
+            v={VARIETIES[id]}
+            real={matchByCrop.get(VARIETY_CROP[id])}
+          />
         ))}
       </motion.div>
 

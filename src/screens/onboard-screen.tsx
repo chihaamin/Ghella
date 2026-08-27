@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion"
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 
-import { DropBadge, PinIcon, WaterDrop } from "@/components/ghella/icons"
+import { CheckIcon, DropBadge, PinIcon, WaterDrop } from "@/components/ghella/icons"
 import { ParcelMap } from "@/components/ghella/parcel-map"
 import { SectionLabel } from "@/components/ghella/primitives"
 import { Button } from "@/components/ui/button"
@@ -279,7 +279,7 @@ function StepParcelCard() {
 }
 
 function StepRefine() {
-  const { t } = useT()
+  const { t, pick } = useT()
   const soil = useApp((s) => s.soil)
   const wsrc = useApp((s) => s.wsrc)
   const sal = useApp((s) => s.sal)
@@ -304,6 +304,24 @@ function StepRefine() {
     }
   }, [modelTexture, set])
 
+  // Don't ask what the soil survey already answered: with a model texture the
+  // soil question collapses to a "detected" strip the farmer can override.
+  // The remaining questions renumber so the list never shows a gap.
+  const [changingSoil, setChangingSoil] = useState(false)
+  const askSoil = modelTexture === null || changingSoil
+  const qNum = (position: number) => (askSoil ? position : position - 1)
+
+  // The rainfed answer talks rainfall — use THIS parcel's, not the demo's.
+  const annualRain = parcel?.analysis?.climate?.annualRainMm
+  const waterEstLine =
+    wsrc === 3 && annualRain != null
+      ? pick(
+          `Rainfall only — about ${Math.round(annualRain)} mm/yr falls here`,
+          `Pluie seule — environ ${Math.round(annualRain)} mm/an ici`,
+          `مطر فقط — نحو ${Math.round(annualRain)} مم/سنة هنا`
+        )
+      : WATER_ESTIMATES[wsrc]
+
   return (
     <motion.div
       variants={fadeUp}
@@ -313,38 +331,68 @@ function StepRefine() {
     >
       <div className="font-display text-xl font-semibold">{t.obRefineTitle}</div>
 
-      {/* 1 — soil texture */}
-      <div className="flex flex-col gap-2">
-        <SectionLabel className="text-[12px] tracking-[0.1em]">1 · {t.obSoil}</SectionLabel>
-        <div className="flex gap-2">
-          {SOILS.map((s, i) => (
+      {/* Soil texture — asked only when the survey came back empty. */}
+      {askSoil ? (
+        <div className="flex flex-col gap-2">
+          <SectionLabel className="text-[12px] tracking-[0.1em]">1 · {t.obSoil}</SectionLabel>
+          <div className="flex gap-2">
+            {SOILS.map((s, i) => (
+              <button
+                key={s.name}
+                type="button"
+                onClick={() => {
+                  farmerTouched.current = true
+                  set({ soil: i })
+                }}
+                className={cn(
+                  "flex-1 cursor-pointer overflow-hidden rounded-[11px] border-[2.5px] bg-card transition-colors",
+                  pickBorder(soil === i)
+                )}
+              >
+                <div className="h-[54px]" style={{ background: s.tex }} />
+                <div className="px-2 py-[7px] text-center text-[11.5px] font-semibold">
+                  {s.name}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="text-[11.5px] text-muted">
+            {modelTexture ? t.ldSoilModelNote : t.obSoilHint}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <SectionLabel className="text-[12px] tracking-[0.1em]">{t.obSoil}</SectionLabel>
+          <div className="flex items-center gap-2.5 rounded-[11px] border-[1.5px] border-leaf bg-leaf-tint px-3 py-2.5">
+            <span className="flex size-5 flex-none items-center justify-center rounded-full bg-leaf">
+              <CheckIcon size={11} />
+            </span>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="text-[13px] font-bold text-leaf-deep">
+                {modelTexture ? textureLabel(modelTexture) : ""}
+              </span>
+              <span className="text-[11px] leading-[1.4] text-leaf-deep/80">
+                {pick(
+                  "Read from the soil survey for this exact spot — no need to ask.",
+                  "Lu dans le relevé de sol de cet endroit précis — pas besoin de demander.",
+                  "مقروء من مسح التربة لهذه النقطة بالضبط — لا حاجة للسؤال."
+                )}
+              </span>
+            </div>
             <button
-              key={s.name}
               type="button"
-              onClick={() => {
-                farmerTouched.current = true
-                set({ soil: i })
-              }}
-              className={cn(
-                "flex-1 cursor-pointer overflow-hidden rounded-[11px] border-[2.5px] bg-card transition-colors",
-                pickBorder(soil === i)
-              )}
+              onClick={() => setChangingSoil(true)}
+              className="flex-none cursor-pointer text-[12px] font-bold text-leaf underline-offset-2 hover:underline"
             >
-              <div className="h-[54px]" style={{ background: s.tex }} />
-              <div className="px-2 py-[7px] text-center text-[11.5px] font-semibold">
-                {s.name}
-              </div>
+              {pick("Not right?", "Pas ça ?", "غير صحيح؟")}
             </button>
-          ))}
+          </div>
         </div>
-        <div className="text-[11.5px] text-muted">
-          {modelTexture ? t.ldSoilModelNote : t.obSoilHint}
-        </div>
-      </div>
+      )}
 
       {/* 2 — irrigation */}
       <div className="flex flex-col gap-2">
-        <SectionLabel className="text-[12px] tracking-[0.1em]">2 · {t.obWater}</SectionLabel>
+        <SectionLabel className="text-[12px] tracking-[0.1em]">{qNum(2)} · {t.obWater}</SectionLabel>
         <div className="grid grid-cols-2 gap-2">
           {WATER_SOURCES.map((s, i) => (
             <button
@@ -364,14 +412,14 @@ function StepRefine() {
         <div className="flex items-center gap-2 rounded-[10px] bg-water-tint px-3 py-[9px]">
           <WaterDrop />
           <span className="text-[12.5px] font-semibold text-water-deep">
-            {WATER_ESTIMATES[wsrc]}
+            {waterEstLine}
           </span>
         </div>
       </div>
 
       {/* 3 — salinity */}
       <div className="flex flex-col gap-2">
-        <SectionLabel className="text-[12px] tracking-[0.1em]">3 · {t.obSal}</SectionLabel>
+        <SectionLabel className="text-[12px] tracking-[0.1em]">{qNum(3)} · {t.obSal}</SectionLabel>
         <div className="flex gap-2">
           {SALINITY.map((s, i) => (
             <button
@@ -391,7 +439,7 @@ function StepRefine() {
 
       {/* 4 — budget */}
       <div className="flex flex-col gap-2">
-        <SectionLabel className="text-[12px] tracking-[0.1em]">4 · {t.obBudget}</SectionLabel>
+        <SectionLabel className="text-[12px] tracking-[0.1em]">{qNum(4)} · {t.obBudget}</SectionLabel>
         <div className="grid grid-cols-2 gap-2">
           {BUDGET_BANDS.map((b, i) => (
             <button
@@ -415,8 +463,15 @@ function StepRefine() {
         onClick={() => {
           // Persist the farmer's answers on the REAL parcel — they outrank
           // the model's guesses everywhere downstream (soil panel, budget).
+          // Soil is only written when the farmer actually answered it: an
+          // auto-answered (survey) texture stays null on the parcel so the
+          // model's reading keeps governing, at full 12-class precision.
           if (parcel) {
-            setSoilTexture(parcel.id, SOIL_TEXTURES[soil] ?? null)
+            const farmerAnswered = modelTexture === null || farmerTouched.current
+            setSoilTexture(
+              parcel.id,
+              farmerAnswered ? (SOIL_TEXTURES[soil] ?? null) : null
+            )
             setWaterSource(parcel.id, WATER_IDS[wsrc] ?? null)
             setSalinity(parcel.id, SALINITY_IDS[sal] ?? null)
           }

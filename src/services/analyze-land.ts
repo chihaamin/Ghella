@@ -132,7 +132,12 @@ export async function analyzeLand(
   const soilSample = soil ?? UNKNOWN_SOIL
 
   onProgress?.({ stage: "crops", progress: 0.95, label: STAGE_LABELS.crops })
-  const crops = matchCrops({ climate, soil: soilSample, terrain, latitude: lat })
+  // The whole table, not the top-12: the Decide screen looks varieties up by
+  // crop id and a capped list would silently drop tomato on an arid site.
+  const crops = matchCrops(
+    { climate, soil: soilSample, terrain, latitude: lat },
+    Infinity
+  )
 
   onProgress?.({ stage: "done", progress: 1, label: "" })
   return {

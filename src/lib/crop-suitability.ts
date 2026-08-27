@@ -323,6 +323,12 @@ function textureScore(texture: TextureClass, liked: TextureClass[]) {
   return pct(100 * (1 - nearest / TEXTURE_MAX_DISTANCE))
 }
 
+/**
+ * The phrase that marks the dry-side rainfall blocker. `applyIrrigation`
+ * filters on it, so the authoring site below and the filter can never drift.
+ */
+const IRRIGABLE_BLOCKER_MARK = "only works under irrigation"
+
 /* ── the public API ──────────────────────────────────────────── */
 
 /** Bands the whole app reads scores in. Blockers override this — see `matchCrops`. */
@@ -472,7 +478,7 @@ function scoreCrop(envelope: CropEnvelope, site: SiteConditions): CropMatch | nu
     })
     if (rain < envelope.rainAbsMm[0]) {
       blockers.push(
-        `Needs at least ${mm(envelope.rainAbsMm[0])} a season; this site gets ${mm(rain)}, so it only works under irrigation.`,
+        `Needs at least ${mm(envelope.rainAbsMm[0])} a season; this site gets ${mm(rain)}, so it ${IRRIGABLE_BLOCKER_MARK}.`,
       )
     } else if (rain > envelope.rainAbsMm[1]) {
       blockers.push(
@@ -629,4 +635,42 @@ function scoreCrop(envelope: CropEnvelope, site: SiteConditions): CropMatch | nu
     factors: normalised,
     blockers,
   }
+}
+
+/**
+ * Re-read stored matches for a parcel the farmer irrigates. The analysis is
+ * computed rain-fed — it only knows the sky — so once a water source is
+ * stated, rainfall stops being the constraint: the rainfall factor is dropped
+ * (remaining weights renormalised to sum to 1, same honesty rule as
+ * `matchCrops`), the dry-side blocker is lifted, and score, rating and order
+ * are re-derived. Wet-side and frost blockers survive — a valve cannot fix
+ * either. Rain-fed parcels get the list back untouched.
+ */
+export function applyIrrigation(
+  matches: CropMatch[],
+  irrigated: boolean,
+): CropMatch[] {
+  if (!irrigated) return matches
+  return matches
+    .map((match) => {
+      const factors = match.factors.filter((f) => f.key !== "rainfall")
+      if (factors.length === match.factors.length) return match
+      const total = factors.reduce((sum, f) => sum + f.weight, 0)
+      if (total <= 0) return match
+      const renormalised = factors.map((f) => ({ ...f, weight: f.weight / total }))
+      const score = Math.round(
+        renormalised.reduce((sum, f) => sum + f.score * f.weight, 0),
+      )
+      const blockers = match.blockers.filter(
+        (b) => !b.includes(IRRIGABLE_BLOCKER_MARK),
+      )
+      return {
+        ...match,
+        factors: renormalised,
+        blockers,
+        score,
+        rating: blockers.length > 0 ? ("unsuitable" as const) : ratingFromScore(score),
+      }
+    })
+    .sort((a, b) => b.score - a.score)
 }

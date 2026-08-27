@@ -65,6 +65,8 @@ const en = {
   decCompare: "Compare",
   decFoot:
     "Scores come from your parcel’s soil, 10-year weather and regional wholesale prices. Nothing here is a black box — tap any score.",
+  decShortlist: "VARIETY SHORTLIST · DEMO MARKET PRICES",
+  decForLand: "BEST FOR THIS LAND",
 
   // ── Calendar ────────────────────────────────────────────────
   calTitle: "Calendar",
@@ -333,6 +335,8 @@ const fr: Partial<Dict> = {
   decCompare: "Comparer",
   decFoot:
     "Scores calculés depuis votre sol, 10 ans de météo et les prix de gros régionaux. Rien n’est une boîte noire.",
+  decShortlist: "SÉLECTION VARIÉTALE · PRIX DÉMO",
+  decForLand: "LE MEILLEUR POUR CETTE TERRE",
   calTitle: "Calendrier",
   calToday: "Aujourd’hui",
   calMonth: "Mois",
@@ -481,6 +485,8 @@ const ar: Partial<Dict> = {
   decCompare: "قارن",
   decFoot:
     "النتائج محسوبة من تربتك، 10 سنوات طقس وأسعار الجملة الإقليمية. لا صندوق أسود هنا.",
+  decShortlist: "قائمة الأصناف · أسعار تجريبية",
+  decForLand: "الأنسب لهذه الأرض",
   calTitle: "الروزنامة",
   calToday: "اليوم",
   calMonth: "الشهر",

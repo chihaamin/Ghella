@@ -16,7 +16,7 @@
 import { ECOCROP, type CropEnvelope } from "@/data/ecocrop"
 import { VARIETIES, type Variety } from "@/data/varieties"
 import { textureLabel, waterBudget } from "@/lib/agronomy"
-import { plantingMonthsFor } from "@/lib/crop-suitability"
+import { plantingMonthsFor, applyIrrigation } from "@/lib/crop-suitability"
 import { polygonAreaHa, splitPolygon } from "@/lib/geo"
 import { fmt } from "@/lib/utils"
 import type {
@@ -680,7 +680,14 @@ function nameOf(parcel: Parcel): string {
 
 function matchesOf(parcel: Parcel): CropMatch[] {
   const crops = parcel.analysis?.crops
-  return Array.isArray(crops) ? crops : []
+  if (!Array.isArray(crops)) return []
+  // Read the matches the way the parcel is actually farmed: a stated
+  // irrigation source lifts the rain-fed assumption, exactly as the Decide
+  // screen and the parcel detail do. One view of the truth everywhere.
+  return applyIrrigation(
+    crops,
+    parcel.waterSource != null && parcel.waterSource !== "rainfed",
+  )
 }
 
 type MissingField = "soil" | "water" | "salinity"

@@ -23,6 +23,7 @@ import { useForecast } from "@/hooks/use-forecast"
 import { useLandAnalysis } from "@/hooks/use-land-analysis"
 import { useT } from "@/i18n/use-t"
 import { textureLabel, waterBudget } from "@/lib/agronomy"
+import { applyIrrigation } from "@/lib/crop-suitability"
 import { polygonAreaHa, polygonCentroid } from "@/lib/geo"
 import { expand, fadeUp, listStagger, pulse } from "@/lib/motion"
 import { buildRecommendations } from "@/lib/recommendations"
@@ -60,12 +61,24 @@ const SEASON_USABLE_M3: Record<WaterSourceId, number | null> = {
  * against what the stated source delivers. Null — no block — whenever any leg
  * of that is unknown; an invented budget would be acted on.
  */
+/**
+ * The matches as THIS parcel should read them: stored rain-fed, re-read with
+ * the rain constraint lifted when the farmer states an irrigation source.
+ * Same adjustment the Decide screen applies, so the two never disagree.
+ */
+function matchesFor(parcel: Parcel) {
+  const crops = parcel.analysis?.crops ?? []
+  const irrigated =
+    parcel.waterSource != null && parcel.waterSource !== "rainfed"
+  return applyIrrigation(crops, irrigated)
+}
+
 function budgetFor(parcel: Parcel): WaterBudget | null {
   const source = parcel.waterSource
   const climate = parcel.analysis?.climate
   if (!source || !climate) return null
 
-  const top = parcel.analysis?.crops[0]
+  const top = matchesFor(parcel)[0]
   const needMm = top && Number.isFinite(top.waterNeedMm) && top.waterNeedMm > 0 ? top.waterNeedMm : 0
   const areaHa = Number.isFinite(parcel.areaHa) && parcel.areaHa > 0 ? parcel.areaHa : 0
   if (needMm <= 0 || areaHa <= 0) return null
@@ -328,7 +341,10 @@ function ParcelCard({
 
               {analysis && analysis.crops.length > 0 && (
                 <motion.div variants={fadeUp}>
-                  <CropMatches crops={analysis.crops} onPick={() => go("decide")} />
+                  <CropMatches
+                    crops={matchesFor(parcel)}
+                    onPick={() => go("decide")}
+                  />
                 </motion.div>
               )}
 
