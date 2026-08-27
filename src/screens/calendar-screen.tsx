@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion"
+import { useMemo } from "react"
 import type { DayButtonProps } from "react-day-picker"
 import { ar as arLocale, enUS, fr as frLocale } from "react-day-picker/locale"
 
@@ -17,17 +18,52 @@ import {
 } from "@/data/plan"
 import { CROP_SUBTITLE } from "@/data/varieties"
 import { dateOfIso, isoOfDate, useCalendarData } from "@/hooks/use-calendar"
+import type { Lang } from "@/i18n/dict"
 import { useT } from "@/i18n/use-t"
 import { C, TASK_COLOR } from "@/lib/colors"
+import { genericPhases } from "@/lib/generic-plan"
 import { fadeUp, listStagger } from "@/lib/motion"
-import { cn, money } from "@/lib/utils"
-import { useApp, type CalView } from "@/store/app-store"
+import { cn, fmt, money } from "@/lib/utils"
+import { useApp, type CalView, type PlannedCropPlan } from "@/store/app-store"
+
+/* ── Generic-plan money ─────────────────────────────────────── */
+
+/** The app's three UI languages as Intl locales — same mapping as elsewhere. */
+function localeOf(lang: Lang): string {
+  return lang === "fr" ? "fr" : lang === "ar" ? "ar" : "en"
+}
+
+/**
+ * Money formatter for a generic plan, in the currency and rate FROZEN into
+ * the snapshot at commit — mirrors `use-local-currency`'s formatting without
+ * the hook, because a live FX refresh must never silently move a budget the
+ * farmer already said yes to. Whole amounts: season money has no honest cents.
+ */
+function planMoney(plan: PlannedCropPlan, locale: string): (usd: number) => string {
+  return (usd) => {
+    const value = usd * plan.fxRate
+    try {
+      return new Intl.NumberFormat(locale, {
+        style: "currency",
+        currency: plan.currency,
+        maximumFractionDigits: 0,
+      }).format(value)
+    } catch {
+      // Intl does not know the code — still say which currency it is.
+      return `${plan.currency} ${fmt(value)}`
+    }
+  }
+}
 
 /* ── Budget header ──────────────────────────────────────────── */
 
 function BudgetCard() {
-  const { t } = useT()
-  const { budget } = useCalendarData()
+  const { t, lang } = useT()
+  const { budget, plannedCrop } = useCalendarData()
+
+  // A generic plan shows every figure in the snapshot's own currency (spent
+  // included — one card, one currency); the demo keeps its scripted dollars.
+  const fm = plannedCrop ? planMoney(plannedCrop, localeOf(lang)) : money
 
   return (
     <div className="flex flex-col gap-2 rounded-[13px] bg-ink px-3.5 py-3">
@@ -36,7 +72,7 @@ function BudgetCard() {
           {budget.title}
         </span>
         <span className="flex-none font-mono text-[10px] font-bold whitespace-nowrap text-sand">
-          {t.bdSpent} {money(budget.spent)}
+          {t.bdSpent} {fm(budget.spent)}
         </span>
       </div>
 
@@ -44,19 +80,19 @@ function BudgetCard() {
         <div className="flex flex-1 flex-col gap-px">
           <span className="font-mono text-[9px] font-bold text-sand">{t.bdExp}</span>
           <span className="font-display text-lg font-bold text-surface">
-            {money(budget.cost)}
+            {fm(budget.cost)}
           </span>
         </div>
         <div className="flex flex-1 flex-col gap-px">
           <span className="font-mono text-[9px] font-bold text-sand">{t.bdRev}</span>
           <span className="font-display text-lg font-bold text-sun">
-            {money(budget.revenue)}
+            {fm(budget.revenue)}
           </span>
         </div>
         <div className="flex flex-1 flex-col gap-px">
           <span className="font-mono text-[9px] font-bold text-water-light">{t.bdNet}</span>
           <span className="font-display text-lg font-bold text-water-light">
-            {money(budget.net)}
+            {fm(budget.net)}
           </span>
         </div>
       </div>
@@ -75,7 +111,36 @@ function BudgetCard() {
 
 function HeadlineStats() {
   const { t, lang } = useT()
+  const { plannedCrop } = useCalendarData()
   const hvDays = lang === "fr" ? "70 jours" : lang === "ar" ? "70 يومًا" : "70 days"
+
+  // Generic plan: the crop's own cycle and water need, money in the frozen
+  // currency. Same card shell as the demo below — only the data changes.
+  if (plannedCrop) {
+    const revenueTxt = planMoney(plannedCrop, localeOf(lang))(plannedCrop.revenueUsd)
+    // 1 mm over 1 ha = 10 m³ — the same conversion the shortlist card used.
+    const waterM3 = plannedCrop.waterNeedMm * 10 * plannedCrop.areaHa
+    return (
+      <div className="grid grid-cols-2 gap-[9px]">
+        <div className="flex flex-col gap-px rounded-xl border border-line bg-card px-3 py-2.5">
+          <span className="font-mono text-[9px] font-bold text-muted">{t.gpHarvestIn}</span>
+          <span className="font-display text-[19px] font-bold">
+            ~{plannedCrop.cycleDays} {t.gpDays}
+          </span>
+          <span className="text-[10.5px] text-muted-2">{revenueTxt}</span>
+        </div>
+        <div className="flex flex-col gap-px rounded-xl border border-line bg-card px-3 py-2.5">
+          <span className="font-mono text-[9px] font-bold text-water-deep">{t.gpWaterPlan}</span>
+          <span className="font-display text-[19px] font-bold text-water-deep">
+            {fmt(waterM3)} m³
+          </span>
+          <span className="text-[10.5px] text-muted-2">
+            {plannedCrop.parcelName} · {plannedCrop.areaHa.toFixed(1)} ha
+          </span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="grid grid-cols-2 gap-[9px]">
@@ -97,6 +162,7 @@ function HeadlineStats() {
 function StageBar() {
   const { t } = useT()
   const planned = useApp((s) => s.planned)
+  const plannedCrop = useApp((s) => s.plannedCrop)
   const stages = [
     { f: 0.6, c: C.leafBright },
     { f: 0.4, c: C.chip },
@@ -109,7 +175,10 @@ function StageBar() {
     <div className="flex flex-col gap-[7px] rounded-xl border border-line bg-card px-3 py-2.5">
       <div className="flex justify-between text-[12px] font-semibold">
         <span>
-          {t.pNorth} · {planned ? CROP_SUBTITLE[planned] : ""}
+          {/* A generic plan names its own parcel and crop; demo keeps North. */}
+          {plannedCrop
+            ? `${plannedCrop.parcelName} · ${plannedCrop.name}`
+            : `${t.pNorth} · ${planned ? CROP_SUBTITLE[planned] : ""}`}
         </span>
         <span className="font-bold text-leaf">{t.calStage}</span>
       </div>
@@ -402,6 +471,22 @@ function YearView() {
 }
 
 function PlanView() {
+  const { t, lang } = useT()
+  const { plannedCrop, seasonStart } = useCalendarData()
+
+  // Generic plans derive their phases from the committed snapshot; the demo
+  // keeps its scripted PHASES. Both feed the SAME card JSX below — the plan
+  // view must read as the data changing, never the UI.
+  const phases = useMemo(() => {
+    if (!plannedCrop) return PHASES
+    // The hook's seasonStart sits two days BEFORE the commit day (its
+    // "day 1"); the generator anchors its phase maths on the commit day.
+    const commitDay = new Date(seasonStart)
+    commitDay.setDate(commitDay.getDate() + 2)
+    const locale = localeOf(lang)
+    return genericPhases(plannedCrop, commitDay, t, planMoney(plannedCrop, locale), locale)
+  }, [plannedCrop, seasonStart, t, lang])
+
   return (
     <motion.div
       variants={listStagger}
@@ -409,7 +494,7 @@ function PlanView() {
       animate="show"
       className="flex flex-col gap-2.5"
     >
-      {PHASES.map((ph) => (
+      {phases.map((ph) => (
         <motion.div
           key={ph.n}
           variants={fadeUp}
@@ -467,10 +552,12 @@ function PlanView() {
 export function CalendarScreen() {
   const { t } = useT()
   const planned = useApp((s) => s.planned)
+  const plannedCrop = useApp((s) => s.plannedCrop)
   const calView = useApp((s) => s.calView)
   const treated = useApp((s) => s.treated)
   const set = useApp((s) => s.set)
-  const hasPlan = planned !== null
+  // Either commitment fills the calendar: the demo variety or a generic plan.
+  const hasPlan = planned !== null || plannedCrop !== null
 
   const views: Array<{ value: CalView; label: string }> = [
     { value: "plan", label: t.calPlan },

@@ -716,7 +716,11 @@ interface PlannedCrop {
 }
 
 /**
- * Resolves `parcel.plannedVarietyId` through `src/data/varieties`.
+ * Resolves `parcel.plannedVarietyId` — an EcoCrop id when the farmer pressed
+ * "Plan the harvest" on a real shortlist card, a demo VarietyId when they
+ * committed on the prototype Decide screen. EcoCrop resolves first: those ids
+ * are what the real flow writes, and the envelope carries the exact botanical
+ * family rotation advice needs.
  *
  * Returns null rather than guessing at any step: a wrong family produces
  * confidently wrong rotation advice, which is worse than no advice.
@@ -724,6 +728,16 @@ interface PlannedCrop {
 function plannedCrop(parcel: Parcel): PlannedCrop | null {
   const id = parcel.plannedVarietyId
   if (!id) return null
+
+  const envelope = ECOCROP.find((e) => e.id === id)
+  if (envelope) {
+    return {
+      crop: titleCase(envelope.name),
+      family: envelope.family,
+      warn: null,
+    }
+  }
+
   const variety = (VARIETIES as Record<string, Variety | undefined>)[id]
   if (!variety || typeof variety.crop !== "string") return null
 

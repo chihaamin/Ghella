@@ -16,6 +16,11 @@
  * real one reads as the data changing, never the UI. `ScoreDrop` and
  * `priceMonth` therefore LIVE here and are re-exported to the screen — one
  * definition, pixel-identical by construction rather than by discipline.
+ *
+ * Every card carries a "Plan the harvest" button that snapshots the figures
+ * the card is showing into a `PlannedCropPlan` — the calendar then renders a
+ * real crop-specific season from that frozen picture. The demo variety flow
+ * (commitVariety on the scripted decide cards) is untouched and separate.
  */
 
 import { AnimatePresence, motion } from "framer-motion"
@@ -34,7 +39,8 @@ import { useT } from "@/i18n/use-t"
 import { C } from "@/lib/colors"
 import { expand, fadeUp, listStagger } from "@/lib/motion"
 import { cn, fmt } from "@/lib/utils"
-import { useApp, type SortKey, type VarietyId } from "@/store/app-store"
+import { useApp, type SortKey } from "@/store/app-store"
+import { useParcels } from "@/store/parcel-store"
 import type { CropMatch, CropRating, MarketPrice, Parcel } from "@/types/land"
 
 /* ── Shared card furniture (extracted from decide-screen) ────── */
@@ -138,20 +144,6 @@ export function selectShortlist(matches: CropMatch[]): CropMatch[] {
 const ENVELOPE_BY_ID = new Map(ECOCROP.map((e) => [e.id, e]))
 
 /**
- * crop id → demo variety, the REVERSE of the screen's `VARIETY_CROP` (minus
- * "fz", tomato's second variety — the reverse must be a function). Only these
- * four crops can offer a Commit button: the calendar demo's task plan only
- * knows these varieties, so committing anything else would open an empty
- * season. Every other crop shortlists without a commit row.
- */
-const CROP_VARIETY: Record<string, VarietyId> = {
-  tomato: "rg",
-  "sweet-pepper": "bk",
-  onion: "gr",
-  melon: "mz",
-}
-
-/**
  * Rating → badge tint, the same green→blue→amber→red ladder
  * `components/land/crop-matches.tsx` paints its rating badges with. Copied
  * rather than imported because that module keeps it private and is not this
@@ -169,6 +161,8 @@ interface CardEconomics {
   live: MarketPrice | null
   /** $/kg actually used in the arithmetic — live if present, else reference. */
   usedPrice: number
+  /** Gross revenue in USD — kept so the plan snapshot never re-derives it. */
+  revenue: number
   net: number
   cost: number
   waterM3: number
@@ -178,8 +172,6 @@ interface CardEconomics {
 
 interface ShortlistRow {
   crop: CropMatch
-  /** The demo variety this crop commits as, or null for no commit row. */
-  varietyId: VarietyId | null
   econ: CardEconomics
 }
 
@@ -213,8 +205,7 @@ function buildRows(
     const wps = waterM3 > 0 ? net / waterM3 : 0
     rows.push({
       crop,
-      varietyId: CROP_VARIETY[crop.id] ?? null,
-      econ: { live, usedPrice, net, cost, waterM3, wps },
+      econ: { live, usedPrice, revenue, net, cost, waterM3, wps },
     })
   }
   return rows
@@ -243,23 +234,25 @@ function sortRows(rows: ShortlistRow[], sort: SortKey): ShortlistRow[] {
  */
 function ShortlistCard({
   row,
-  areaHa,
+  parcel,
   local,
   open,
   onToggle,
 }: {
   row: ShortlistRow
-  areaHa: number
+  parcel: Parcel
   /** The field-country money formatter — every payout figure goes through it. */
   local: LocalCurrency
   open: boolean
   onToggle: () => void
 }) {
   const { t, lang, pick } = useT()
-  const commit = useApp((s) => s.commitVariety)
+  const planCrop = useApp((s) => s.planCrop)
+  const setPlannedVariety = useParcels((s) => s.setPlannedVariety)
   const budBand = useApp((s) => s.bud)
 
-  const { crop, varietyId, econ } = row
+  const { crop, econ } = row
+  const areaHa = parcel.areaHa
 
   // Money follows the FIELD's country — a Tunisian parcel earns dinars, not
   // dollars. Intl signs a loss itself, however the locale writes a minus.
@@ -420,28 +413,47 @@ function ShortlistCard({
                 {waterMath}
               </div>
 
-              {varietyId && (
-                <div className="flex gap-2">
-                  <Button
-                    variant="leaf"
-                    size="md"
-                    className="flex-1 rounded-[10px]"
-                    onClick={() =>
-                      commit(
-                        varietyId,
-                        lang === "ar"
-                          ? "أُنشئت الخطة والميزانية — 34 مهمة حتى الحصاد"
-                          : "Season plan + budget created — 34 tasks to harvest"
+              <div className="flex gap-2">
+                <Button
+                  variant="leaf"
+                  size="md"
+                  className="flex-1 rounded-[10px]"
+                  onClick={() => {
+                    // Snapshot the EXACT figures this card is showing — the
+                    // calendar must render the numbers the farmer said yes
+                    // to, never a later price refresh.
+                    planCrop(
+                      {
+                        cropId: crop.id,
+                        name: crop.name,
+                        cycleDays: crop.cycleDays,
+                        waterNeedMm: crop.waterNeedMm,
+                        areaHa: parcel.areaHa,
+                        revenueUsd: econ.revenue,
+                        costUsd: econ.cost,
+                        usedPriceUsd: econ.usedPrice,
+                        priceLive: !!econ.live,
+                        currency: local.code,
+                        fxRate: local.rate,
+                        parcelName: parcel.name,
+                      },
+                      pick(
+                        `Season plan created — ${crop.name} to harvest in ~${crop.cycleDays} days`,
+                        `Plan de saison créé — ${crop.name}, récolte dans ~${crop.cycleDays} jours`,
+                        `أُنشئت خطة الموسم — ${crop.name}، الحصاد بعد ~${crop.cycleDays} يومًا`
                       )
-                    }
-                  >
-                    {t.decCommit}
-                  </Button>
-                  <Button variant="outline" size="md" className="rounded-[10px]">
-                    {t.decCompare}
-                  </Button>
-                </div>
-              )}
+                    )
+                    // Rotation and recommendations read the committed crop
+                    // off the parcel itself, not the calendar's snapshot.
+                    setPlannedVariety(parcel.id, crop.id)
+                  }}
+                >
+                  {t.decPlanHarvest}
+                </Button>
+                <Button variant="outline" size="md" className="rounded-[10px]">
+                  {t.decCompare}
+                </Button>
+              </div>
             </div>
           </motion.div>
         ) : (
@@ -509,7 +521,7 @@ export function CropShortlist({
         <ShortlistCard
           key={row.crop.id}
           row={row}
-          areaHa={parcel.areaHa}
+          parcel={parcel}
           local={local}
           open={openId === row.crop.id}
           onToggle={() =>

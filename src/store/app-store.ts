@@ -12,6 +12,29 @@ export type Screen =
   | "close"
 
 export type CalView = "plan" | "today" | "month" | "year"
+
+/**
+ * Snapshot of a REAL planned crop, taken the moment the farmer presses
+ * "Plan the harvest" on a shortlist card. The calendar renders from this
+ * frozen picture — economics do not silently drift when a price refreshes.
+ * Coexists with the demo `planned` variety; setting one clears the other.
+ */
+export interface PlannedCropPlan {
+  cropId: string
+  name: string
+  cycleDays: number
+  waterNeedMm: number
+  areaHa: number
+  revenueUsd: number
+  costUsd: number
+  usedPriceUsd: number
+  /** true when the price came from a live series, false when indicative. */
+  priceLive: boolean
+  /** Display currency of the field country plus the USD -> currency rate. */
+  currency: string
+  fxRate: number
+  parcelName: string
+}
 export type VarietyId = "rg" | "bk" | "gr" | "mz" | "fz"
 export type CropId = "tom" | "pep" | "oni" | "mel"
 export type SortKey = "wps" | "profit" | "water" | "cycle" | "risk"
@@ -47,6 +70,7 @@ export interface AppState {
 
   // ── Decision ──────────────────────────────────────────────
   planned: VarietyId | null
+  plannedCrop: PlannedCropPlan | null
   sort: SortKey
   open: VarietyId | ""
 
@@ -95,6 +119,8 @@ export interface AppActions {
   stopAnalysis: () => void
 
   commitVariety: (id: VarietyId, message: string) => void
+  /** The real-shortlist counterpart of commitVariety. */
+  planCrop: (plan: PlannedCropPlan, message: string) => void
   toggleVariety: (id: VarietyId) => void
 
   cycleTask: (id: string, status: TaskStatus) => void
@@ -134,6 +160,7 @@ const initial: AppState = {
   pcolor: 2,
 
   planned: null,
+  plannedCrop: null,
   sort: "wps",
   open: "rg",
 
@@ -231,6 +258,18 @@ export const useApp = create<AppState & AppActions>((set, get) => ({
     // The commit day anchors the whole schedule to real dates.
     set({
       planned: id,
+      plannedCrop: null,
+      screen: "cal",
+      calView: "plan",
+      seasonStartIso: new Date().toISOString().slice(0, 10),
+    })
+  },
+
+  planCrop: (plan, message) => {
+    get().toast(message)
+    set({
+      plannedCrop: plan,
+      planned: null,
       screen: "cal",
       calView: "plan",
       seasonStartIso: new Date().toISOString().slice(0, 10),
@@ -261,10 +300,17 @@ export const useApp = create<AppState & AppActions>((set, get) => ({
       screen: "disease",
       dz: 0,
       shots: 0,
-      planned: s.planned ?? "rg",
+      // The demo default must not overwrite a REAL plan: with a generic
+      // plannedCrop active, resurrecting "rg" would make the season-close
+      // and Decide screens claim Rio Grande beside a chickpea calendar.
+      planned: s.plannedCrop ? s.planned : (s.planned ?? "rg"),
     })),
   goClose: () =>
-    set((s) => ({ screen: "close", cl: 0, planned: s.planned ?? "rg" })),
+    set((s) => ({
+      screen: "close",
+      cl: 0,
+      planned: s.plannedCrop ? s.planned : (s.planned ?? "rg"),
+    })),
 
   bumpYield: (delta) =>
     set((s) => ({ clYield: clamp(s.clYield + delta, 10, 60) })),

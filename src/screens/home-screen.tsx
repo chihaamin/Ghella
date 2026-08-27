@@ -422,12 +422,14 @@ function ParcelCard({
 export function HomeScreen() {
   const { t } = useT()
   const planned = useApp((s) => s.planned)
+  const plannedCrop = useApp((s) => s.plannedCrop)
   const treated = useApp((s) => s.treated)
   const goOnboard = useApp((s) => s.goOnboard)
   const go = useApp((s) => s.go)
   const toast = useApp((s) => s.toast)
   const locatedAt = useApp((s) => s.locatedAt)
-  const hasPlan = planned !== null
+  // A generic season plan counts as having a plan, same as the demo variety.
+  const hasPlan = planned !== null || plannedCrop !== null
 
   const parcels = useParcels((s) => s.parcels)
   const selectedParcelId = useParcels((s) => s.selectedParcelId)

@@ -87,11 +87,44 @@ export function useCalendarData() {
   const frost = useApp((s) => s.frost)
   const treated = useApp((s) => s.treated)
   const planned = useApp((s) => s.planned)
+  const plannedCrop = useApp((s) => s.plannedCrop)
   const tstat = useApp((s) => s.tstat)
   const selDate = useApp((s) => s.selDate)
   const seasonStartIso = useApp((s) => s.seasonStartIso)
 
   return useMemo(() => {
+    // Task-cost chips follow the plan's currency: a TND budget card next to a
+    // "$310" chip would read as two different bills for one job. The demo
+    // dollar path is untouched when no generic plan is active.
+    const taskCost = (id: string): string => {
+      const usd = TASK_COST[id]
+      if (!usd) return ""
+      if (!plannedCrop) return `$${usd}`
+      try {
+        return new Intl.NumberFormat(lang, {
+          style: "currency",
+          currency: plannedCrop.currency,
+          maximumFractionDigits: 0,
+        }).format(usd * plannedCrop.fxRate)
+      } catch {
+        return `$${usd}`
+      }
+    }
+
+    /** Same conversion for the month-detail's literal dollar figures. */
+    const dayCost = (usd: number): string => {
+      if (!plannedCrop) return `$${usd}`
+      try {
+        return new Intl.NumberFormat(lang, {
+          style: "currency",
+          currency: plannedCrop.currency,
+          maximumFractionDigits: 0,
+        }).format(usd * plannedCrop.fxRate)
+      } catch {
+        return `$${usd}`
+      }
+    }
+
     const task = (
       id: string,
       kind: TaskKind,
@@ -106,7 +139,7 @@ export function useCalendarData() {
       title,
       calc,
       why,
-      cost: TASK_COST[id] ? `$${TASK_COST[id]}` : "",
+      cost: taskCost(id),
       moved: "",
       cancelNote: "",
       status: tstat[id],
@@ -129,7 +162,12 @@ export function useCalendarData() {
         task("cu1", "t", td.cu1, td.cu1C, td.cu1W, { moved: td.cuMoved })
       )
     }
-    todayTasks.push(task("beds", "r", td.bedsT, td.bedsC, td.bedsW))
+    // The demo why-line names the demo variety (English only — FR/AR are
+    // already generic); a generic plan swaps in the crop actually committed.
+    const bedsWhy = plannedCrop
+      ? td.bedsW.replace("Rio Grande", plannedCrop.name)
+      : td.bedsW
+    todayTasks.push(task("beds", "r", td.bedsT, td.bedsC, bedsWhy))
 
     // ── Real-date schedule ──────────────────────────────────
     // Day 1 of the season sits two days before the anchor (commit day, or
@@ -168,33 +206,41 @@ export function useCalendarData() {
     const d = daysBetween(seasonStart, dateOfIso(selectedIso)) + 1
     if (d >= 1 && d <= 30) {
       if (d <= 2)
-        dayTasks.push({ c: C.earth, t: td.prepT, cost: d === 1 ? "$310" : "" })
+        dayTasks.push({ c: C.earth, t: td.prepT, cost: d === 1 ? dayCost(310) : "" })
       if (d === 3) dayTasks.push({ c: C.water, t: td.flushT, cost: "" })
       if (d >= 5 && d <= 8)
-        dayTasks.push({ c: C.leafBright, t: td.bedsT, cost: d === 5 ? "$45" : "" })
+        dayTasks.push({ c: C.leafBright, t: td.bedsT, cost: d === 5 ? dayCost(45) : "" })
       if (d >= 9 && d <= 12) {
         dayTasks.push({
           c: C.leafBright,
           t: td.transplantT,
-          cost: d === 9 ? "$560" : "",
+          cost: d === 9 ? dayCost(560) : "",
         })
         if (d === 9)
           dayTasks.push({ c: C.water, t: td.waterInT, cost: "" })
       }
       if (d >= 13 && d % 2 === 1)
-        dayTasks.push({ c: C.water, t: td.dripEstT, cost: "$6" })
+        dayTasks.push({ c: C.water, t: td.dripEstT, cost: dayCost(6) })
       if ([15, 22, 29].includes(d))
         dayTasks.push({ c: C.leafBright, t: td.scoutT, cost: "" })
-      if (d === 19) dayTasks.push({ c: C.sunDeep, t: td.trT, cost: "$26" })
+      if (d === 19) dayTasks.push({ c: C.sunDeep, t: td.trT, cost: dayCost(26) })
       if (treated && [5, 12, 19].includes(d))
-        dayTasks.push({ c: C.sunDeep, t: td.cu1, cost: "$31" })
+        dayTasks.push({ c: C.sunDeep, t: td.cu1, cost: dayCost(31) })
     }
 
     const locale = lang === "fr" ? "fr" : lang === "ar" ? "ar" : "en"
     const dayLabel = dateOfIso(selectedIso)
       .toLocaleDateString(locale, { day: "numeric", month: "short" })
       .toUpperCase()
-    const dayTitle = `${dayLabel} · ${planned ? CROP_SUBTITLE[planned] : ""}`
+    // One crop line for the day header AND the budget title: the generic
+    // snapshot's own name, or the demo subtitle — `planned` may be null while
+    // `plannedCrop` is set, so every CROP_SUBTITLE lookup stays guarded.
+    const cropLine = plannedCrop
+      ? plannedCrop.name
+      : planned
+        ? CROP_SUBTITLE[planned]
+        : ""
+    const dayTitle = `${dayLabel} · ${cropLine}`
     const dayCount =
       dayTasks.length +
       (lang === "fr" ? " tâche(s)" : lang === "ar" ? " مهمة" : " task(s)")
@@ -205,9 +251,15 @@ export function useCalendarData() {
         status === "done" && TASK_COST[id] ? sum + TASK_COST[id] : sum,
       0
     )
-    const [revenue, cost] = planned ? SEASON_BUDGET[planned] : [0, 0]
+    // A generic plan budgets from its frozen snapshot (USD internally — the
+    // screen localizes); the demo keeps its scripted per-variety figures.
+    const [revenue, cost] = plannedCrop
+      ? [plannedCrop.revenueUsd, plannedCrop.costUsd]
+      : planned
+        ? SEASON_BUDGET[planned]
+        : [0, 0]
     const budget: Budget = {
-      title: `BUDGET · ${(planned ? CROP_SUBTITLE[planned] : "").toUpperCase()}`,
+      title: `BUDGET · ${cropLine.toUpperCase()}`,
       revenue,
       cost,
       net: revenue - cost,
@@ -224,6 +276,7 @@ export function useCalendarData() {
       dayTitle,
       dayCount,
       budget,
+      plannedCrop,
     }
-  }, [t, td, lang, rain, frost, treated, planned, tstat, selDate, seasonStartIso])
+  }, [t, td, lang, rain, frost, treated, planned, plannedCrop, tstat, selDate, seasonStartIso])
 }
