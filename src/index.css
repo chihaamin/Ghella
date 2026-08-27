@@ -1,0 +1,136 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* ─────────────────────────────────────────────────────────────
+   Ghella design tokens
+   Ported 1:1 from the Claude Design source (Ghella Farmer App.dc.html).
+   Every hex below appears in the original artboard — keep them in sync.
+   ───────────────────────────────────────────────────────────── */
+@theme {
+  /* Neutrals — paper, ink and the sun-bleached canvas the brand sits on */
+  --color-canvas: #eceadf;
+  --color-surface: #f7f4ec;
+  --color-surface-raised: #fffdf7;
+  --color-card: #ffffff;
+  --color-ink: #1f2416;
+  --color-ink-soft: #3a3a30;
+  --color-ink-muted: #4a4a3f;
+  --color-muted: #6b6353;
+  --color-muted-2: #8a8474;
+  --color-line: #e2dcc8;
+  --color-line-strong: #d8d2bf;
+  --color-line-dash: #b9b19a;
+  --color-chip: #eee8d8;
+  --color-chip-2: #f2f0e6;
+  --color-chip-3: #f0e6dc;
+  --color-cream: #f0e3c0;
+  --color-sand: #a8a695;
+  --color-sand-2: #c9c2a9;
+
+  /* Leaf — the crop / "go" green */
+  --color-leaf: #4c6b2f;
+  --color-leaf-deep: #2f4520;
+  --color-leaf-bright: #4c8a3a;
+  --color-leaf-light: #9fdc7e;
+  --color-leaf-tint: #e7efdc;
+  --color-leaf-soft: #d9e4c9;
+
+  /* Water — irrigation, forecasts, anything measured in m³ */
+  --color-water: #1f7fb8;
+  --color-water-deep: #0e5e8e;
+  --color-water-light: #7cc5ec;
+  --color-water-pale: #9cc4dd;
+  --color-water-tint: #eaf2fb;
+
+  /* Sun — money, harvest, budget */
+  --color-sun: #d9a441;
+  --color-sun-deep: #c77d1d;
+  --color-sun-ink: #7a5a1e;
+  --color-sun-ink-2: #5c4a1e;
+  --color-sun-tint: #fdf1e3;
+  --color-sun-tint-2: #fdf6e6;
+
+  /* Clay — warnings, lockouts, pre-harvest intervals */
+  --color-clay: #b3402f;
+  --color-clay-light: #f2a99d;
+  --color-clay-pale: #f2c4bb;
+  --color-clay-tint: #fbeae7;
+
+  /* Earth + accents */
+  --color-earth: #6b4a2e;
+  --color-earth-2: #8a6a4b;
+  --color-violet: #7a5aa8;
+  --color-violet-light: #b9a8d9;
+
+  /* Typography */
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Karla", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, monospace;
+  --font-arabic: "IBM Plex Sans Arabic", "Karla", ui-sans-serif, sans-serif;
+
+  /* shadcn/ui semantic aliases, pointed at the Ghella palette so the
+     primitives below components/ui inherit the brand with no overrides. */
+  --color-background: var(--color-surface);
+  --color-foreground: var(--color-ink);
+  --color-primary: var(--color-leaf);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--color-chip);
+  --color-secondary-foreground: var(--color-ink);
+  --color-muted-foreground: var(--color-muted);
+  --color-accent: var(--color-leaf-tint);
+  --color-accent-foreground: var(--color-leaf-deep);
+  --color-destructive: var(--color-clay);
+  --color-border: var(--color-line);
+  --color-input: var(--color-line-strong);
+  --color-ring: var(--color-leaf);
+
+  --radius-card: 14px;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The phone body scrolls internally; the artboard never should. */
+  [data-scroll-hidden]::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+  [data-scroll-hidden] {
+    scrollbar-width: none;
+  }
+
+  :where([dir="rtl"]) {
+    font-family: var(--font-arabic);
+  }
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+}
+
+/* Leaflet sits inside a rounded card and must not paint over the HUD chips. */
+.gh-map .leaflet-container {
+  background: #2c3522;
+}
+.gh-map .leaflet-control-attribution {
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
