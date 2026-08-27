@@ -4,9 +4,19 @@ A React implementation of the **Ghella Farmer App** artboard from the
 [Agriculture mobile app design](https://claude.ai/design/p/828bb4c7-c683-47fc-8a46-bb3551cc42bc)
 Claude Design project.
 
+Two apps share one brain:
+
+- **`/` (this directory)** — the original web app (React 19 + Vite + Tailwind).
+- **[`mobile/`](./mobile)** — the React Native / Expo port: same stores,
+  services, hooks, data and i18n line-for-line, with the render layer
+  rewritten in React Native (`react-native-maps` satellite on device,
+  Leaflet on Expo web). See [mobile/README.md](./mobile/README.md).
+
 ```bash
 npm install
-npm run dev
+npm run dev        # web app
+# — or —
+cd mobile && npm install && npx expo start   # native app (Expo Go / web)
 ```
 
 ## Stack
