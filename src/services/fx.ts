@@ -67,3 +67,93 @@ export async function eurToUsd(options?: FetchOptions): Promise<number> {
     return FALLBACK_EUR_USD
   }
 }
+
+/* ── USD → everything ────────────────────────────────────────── */
+
+const USD_RATES_URL = "https://open.er-api.com/v6/latest/USD"
+
+/**
+ * Second publisher of the same daily data, mirrored on jsDelivr. It answers
+ * with LOWERCASE codes under a `usd` key — normalized below so the two feeds
+ * are interchangeable to callers.
+ */
+const USD_RATES_FALLBACK_URL =
+  "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json"
+
+/** Both feeds carry 150+ codes; fewer than this and we got an error page, not a rate table. */
+const MIN_RATE_CODES = 20
+
+/** Only the fields read — er-api also echoes update times and attribution. */
+interface ErApiLatest {
+  result?: string
+  rates?: Record<string, unknown>
+}
+
+/** The jsDelivr shape: `{ date, usd: { tnd: 2.89, … } }`, lowercase keys. */
+interface FawazUsd {
+  usd?: Record<string, unknown>
+}
+
+/**
+ * Keep only finite positive numbers, uppercase every key, and refuse a table
+ * too small to be real. Throwing (rather than returning a stump) is what lets
+ * the primary hand over to the fallback, and the fallback to `cached`'s stale
+ * entry — the same last-resort ladder `eurToUsd` climbs.
+ */
+function sanitizeRates(raw: Record<string, unknown> | undefined): Record<string, number> {
+  const rates: Record<string, number> = {}
+  if (raw && typeof raw === "object") {
+    for (const [code, value] of Object.entries(raw)) {
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+        rates[code.toUpperCase()] = value
+      }
+    }
+  }
+  if (Object.keys(rates).length < MIN_RATE_CODES) {
+    throw new Error("FX feed answered without a usable rate table")
+  }
+  // USD → USD is definitionally 1; spelling it out saves callers a special case.
+  rates.USD = 1
+  return rates
+}
+
+/**
+ * USD → every ISO-4217 code the feeds publish (always including `USD: 1`),
+ * cached 24 h, or null when both publishers and the cache come up empty.
+ * Never throws — a local-currency figure is a courtesy on a card, and the UI
+ * falls back to plain USD without one.
+ *
+ * Primary is open.er-api.com; the jsDelivr mirror answers when it cannot.
+ * Both live under ONE cache key: a rate table is a rate table, and a fallback
+ * answer today should still be tomorrow's stale-but-real table. The two agree
+ * to ~0.1%, far inside the error bar of the produce prices this converts.
+ */
+export async function usdRates(
+  options?: FetchOptions
+): Promise<Record<string, number> | null> {
+  try {
+    return await cached(cacheKey("fx", "USD", "all"), FX_TTL_MS, async () => {
+      try {
+        const raw = await getJson<ErApiLatest>(USD_RATES_URL, {
+          timeoutMs: 10_000,
+          ...options,
+        })
+        if (raw.result !== "success") {
+          throw new Error("open.er-api answered without success")
+        }
+        return sanitizeRates(raw.rates)
+      } catch (e) {
+        // An unmount is not a feed failure: let it out untouched instead of
+        // burning a second request the component no longer wants.
+        if (e instanceof Error && e.name === "AbortError") throw e
+        const raw = await getJson<FawazUsd>(USD_RATES_FALLBACK_URL, {
+          timeoutMs: 10_000,
+          ...options,
+        })
+        return sanitizeRates(raw.usd)
+      }
+    })
+  } catch {
+    return null
+  }
+}

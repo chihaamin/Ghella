@@ -28,11 +28,12 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ECOCROP } from "@/data/ecocrop"
 import { BUDGET_BANDS } from "@/data/varieties"
+import { useLocalCurrency, type LocalCurrency } from "@/hooks/use-local-currency"
 import type { Lang } from "@/i18n/dict"
 import { useT } from "@/i18n/use-t"
 import { C } from "@/lib/colors"
 import { expand, fadeUp, listStagger } from "@/lib/motion"
-import { cn, fmt, money } from "@/lib/utils"
+import { cn, fmt } from "@/lib/utils"
 import { useApp, type SortKey, type VarietyId } from "@/store/app-store"
 import type { CropMatch, CropRating, MarketPrice, Parcel } from "@/types/land"
 
@@ -44,6 +45,21 @@ export function priceMonth(month: string, lang: Lang): string {
     lang === "fr" ? "fr" : lang === "ar" ? "ar" : "en",
     { month: "short", year: "numeric" }
   )
+}
+
+/**
+ * The published local figure, verbatim: Intl's own minor-unit default (2 dp
+ * for EUR, 3 for TND) so a Tunisian series shows the exact millimes the
+ * market board printed. Falls back to code-prefixed digits when Intl does not
+ * know the currency — same posture as `useLocalCurrency`'s formatters.
+ */
+function publishedPerKg(value: number, currency: string, lang: Lang): string {
+  const locale = lang === "fr" ? "fr" : lang === "ar" ? "ar" : "en"
+  try {
+    return `${new Intl.NumberFormat(locale, { style: "currency", currency }).format(value)}/kg`
+  } catch {
+    return `${currency} ${value.toFixed(2)}/kg`
+  }
 }
 
 /** Water-profit score, drawn as a drop filling from the bottom. */
@@ -228,11 +244,14 @@ function sortRows(rows: ShortlistRow[], sort: SortKey): ShortlistRow[] {
 function ShortlistCard({
   row,
   areaHa,
+  local,
   open,
   onToggle,
 }: {
   row: ShortlistRow
   areaHa: number
+  /** The field-country money formatter — every payout figure goes through it. */
+  local: LocalCurrency
   open: boolean
   onToggle: () => void
 }) {
@@ -242,8 +261,9 @@ function ShortlistCard({
 
   const { crop, varietyId, econ } = row
 
-  // The U+2212 minus keeps a loss in the same type run as a gain: "−$1,234".
-  const profitTxt = econ.net < 0 ? `−${money(-econ.net)}` : money(econ.net)
+  // Money follows the FIELD's country — a Tunisian parcel earns dinars, not
+  // dollars. Intl signs a loss itself, however the locale writes a minus.
+  const profitTxt = local.formatMoney(econ.net)
   const areaTxt = areaHa.toFixed(1)
   const netCaption = pick(
     `net · your ${areaTxt} ha`,
@@ -252,18 +272,27 @@ function ShortlistCard({
   )
 
   // Honesty line under the money: a live price names its market, month and
-  // source; the fallback admits it is indicative with no local series.
+  // source; the fallback admits it is indicative with no local series. When
+  // the series is published in the field's own currency, show the EXACT
+  // published figure rather than a round trip through USD and back — the
+  // farmer recognises that number from the market board, and two conversions
+  // would drift it by a millime or two.
+  const perKgTxt =
+    econ.live && econ.live.currency === local.code
+      ? publishedPerKg(econ.live.localPerKg, econ.live.currency, lang)
+      : local.formatPerKg(econ.usedPrice)
   const priceLine = econ.live
-    ? `@ $${econ.usedPrice.toFixed(2)}/kg · ${econ.live.market}, ` +
+    ? `@ ${perKgTxt} · ${econ.live.market}, ` +
       `${priceMonth(econ.live.month, lang)} · ${econ.live.source}`
-    : `@ $${econ.usedPrice.toFixed(2)}/kg · ${t.decIndicative} · ${t.decNoSeries}`
+    : `@ ${perKgTxt} · ${t.decIndicative} · ${t.decNoSeries}`
 
   // Same budget gate as the demo cards: costs scale with the real area, and
-  // the same band cap decides when to shout.
+  // the same band cap decides when to shout. The COMPARISON stays in USD —
+  // BUDGET_BANDS are USD data — only the displayed figure is localized.
   const band = BUDGET_BANDS[budBand]
   const budgetWarn =
     econ.cost > band.cap
-      ? `Inputs ≈ $${fmt(econ.cost)} — above your ${band.label} budget`
+      ? `Inputs ≈ ${local.formatMoney(econ.cost)} — above your ${band.label} budget`
       : ""
 
   const monthShort = (m: number) =>
@@ -331,6 +360,9 @@ function ShortlistCard({
           </div>
         </div>
 
+        {/* Deliberately still USD $/m³: the drop is a comparative score across
+            crops and countries, not a payout — converting it would re-rank
+            nothing and cost the cross-country comparability. */}
         <ScoreDrop id={crop.id} wps={Math.max(0, econ.wps)} />
       </button>
 
@@ -452,6 +484,10 @@ export function CropShortlist({
   // the whole story and two of them open is a wall.
   const [openId, setOpenId] = useState<string | null>(null)
 
+  // Every card shows money in the FIELD's currency — the parcel's country,
+  // not the reader's locale, decides what a harvest actually sells in.
+  const local = useLocalCurrency(parcel.analysis?.place?.countryCode ?? null)
+
   const rows = useMemo(
     () => buildRows(matches, prices, parcel.areaHa),
     [matches, prices, parcel.areaHa]
@@ -474,6 +510,7 @@ export function CropShortlist({
           key={row.crop.id}
           row={row}
           areaHa={parcel.areaHa}
+          local={local}
           open={openId === row.crop.id}
           onToggle={() =>
             setOpenId((cur) => (cur === row.crop.id ? null : row.crop.id))

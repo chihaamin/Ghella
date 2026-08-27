@@ -339,7 +339,10 @@ async function fetchLatestPrice(
     const usd = point.price_value_dollar
     const local = point.price_value
     if (typeof usd !== "number" || !Number.isFinite(usd) || usd <= 0) continue
-    if (typeof local !== "number" || !Number.isFinite(local)) continue
+    // Same plausibility gate as the dollar figure: a zero or negative local
+    // price is a junk datapoint, and the UI prints localPerKg verbatim.
+    if (typeof local !== "number" || !Number.isFinite(local) || local <= 0)
+      continue
     if (typeof point.date !== "string" || point.date.length < 7) continue
 
     const usdPerKg = usd / chosen.kgFactor
