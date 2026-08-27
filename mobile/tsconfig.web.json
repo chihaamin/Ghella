@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "moduleSuffixes": [".web", ""]
+  },
+  "include": ["src/**/*.web.tsx", "src/types/**/*.d.ts"]
+}
