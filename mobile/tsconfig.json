@@ -1,0 +1,13 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "moduleSuffixes": [".native", ""],
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true
+  },
+  "exclude": ["node_modules", "dist", ".expo"]
+}
