@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0; if [ -n \"$(git status --porcelain)\" ]; then git add -A && git commit -q -m \"chore: auto-commit session changes\"; fi; git push -q origin HEAD >/dev/null 2>&1 || true",
+            "timeout": 120,
+            "async": true,
+            "statusMessage": "Committing & pushing changes…"
+          }
+        ]
+      }
+    ]
+  }
+}
