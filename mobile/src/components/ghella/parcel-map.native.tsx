@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react"
 import { Pressable, StyleSheet, Text, View } from "react-native"
 import { WebView, type WebViewMessageEvent } from "react-native-webview"
 
-import { ESRI_TILES, leafletDoc } from "@/components/maps/leaflet-doc"
+import { ESRI_TILES, jsValue, leafletDoc } from "@/components/maps/leaflet-doc"
 import { MAP_START } from "@/data/onboarding"
 import { useT } from "@/i18n/use-t"
 import { C } from "@/lib/colors"
@@ -22,7 +22,7 @@ const INK_85 = "rgba(31, 36, 22, 0.85)"
  * commit. The HUD chips stay native, drawn over the WebView.
  *
  * Page → RN: {type:"pts", pts}, {type:"center", lat, lng}, {type:"ready"}.
- * RN → page: __reset(), __located(lat, lng).
+ * RN → page: __reset(), __located(lat, lng), __setPts(pts).
  */
 export function ParcelMap(_props: ParcelMapProps) {
   const { t, isRtl } = useT()
@@ -115,6 +115,13 @@ export function ParcelMap(_props: ParcelMapProps) {
         redraw();
       };
 
+      // Rehydration: the RN side re-delivers the store's points on ready so a
+      // reloaded page (or a re-entered screen) matches the "N PTS" HUD.
+      window.__setPts = function (next) {
+        pts = next;
+        redraw();
+      };
+
       // The device fix: recentre once when it arrives, and keep a
       // "you are here" dot on it.
       window.__located = function (lat, lng) {
@@ -146,7 +153,13 @@ export function ParcelMap(_props: ParcelMapProps) {
   }
 
   const onMessage = (event: WebViewMessageEvent) => {
-    let msg: { type?: string; pts?: LatLng[]; lat?: number; lng?: number }
+    let msg: {
+      type?: string
+      pts?: LatLng[]
+      lat?: number
+      lng?: number
+      message?: string
+    }
     try {
       msg = JSON.parse(event.nativeEvent.data)
     } catch {
@@ -161,11 +174,19 @@ export function ParcelMap(_props: ParcelMapProps) {
       setState({ mapCenterTxt: `SAT · ${lat} ${lng}` })
     } else if (msg.type === "ready") {
       readyRef.current = true
-      if (pendingFixRef.current) {
-        const [la, ln] = pendingFixRef.current
-        pendingFixRef.current = null
-        inject(`window.__located(${la}, ${ln})`)
+      // Ready fires again when Android reclaims and reloads the WebView
+      // renderer — re-deliver everything the page can't rebuild: the fix
+      // (buffered or current) and the store's drawn points.
+      const fix = pendingFixRef.current ?? useApp.getState().locatedAt
+      pendingFixRef.current = null
+      if (fix) inject(`window.__located(${fix[0]}, ${fix[1]})`)
+      const storePts = useApp.getState().pts
+      if (storePts.length > 0) {
+        lastPtsCountRef.current = storePts.length
+        inject(`window.__setPts(${jsValue(storePts)})`)
       }
+    } else if (msg.type === "error" && __DEV__) {
+      console.warn("[parcel-map webview]", msg.message)
     }
   }
 

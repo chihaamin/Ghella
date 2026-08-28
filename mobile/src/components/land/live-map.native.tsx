@@ -10,6 +10,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview"
 
 import {
   ESRI_TILES,
+  jsValue,
   LABEL_CHIP_STYLE,
   leafletDoc,
 } from "@/components/maps/leaflet-doc"
@@ -46,6 +47,14 @@ interface PagePayload {
   polygons: PagePolygon[]
   labels: PageLabel[]
   fit: null | { points: LatLng[] } | { view: LatLng; zoom: number }
+}
+
+/** The viewport that frames these parcels — the web build's fit effect. */
+function fitFor(parcels: { points: LatLng[] }[]): NonNullable<PagePayload["fit"]> {
+  const points = parcels.flatMap((p) => p.points)
+  return points.length === 0
+    ? { view: NEUTRAL_CENTER, zoom: NEUTRAL_ZOOM }
+    : { points }
 }
 
 /**
@@ -90,6 +99,9 @@ export function LiveLandMap({
         .addAttribution("Esri World Imagery").addTo(map);
 
       var layer = L.layerGroup().addTo(map);
+      // Embedded as a value: the style contains single quotes ('Space Mono')
+      // that would terminate a quoted string if spliced into page source.
+      var LABEL_CHIP = ${jsValue(LABEL_CHIP_STYLE)};
 
       function escapeHtml(s) {
         return String(s)
@@ -121,7 +133,7 @@ export function LiveLandMap({
             icon: L.divIcon({
               className: "",
               iconSize: [0, 0],
-              html: '<span style="${LABEL_CHIP_STYLE}">' + escapeHtml(lb.text) + "</span>"
+              html: '<span style="' + LABEL_CHIP + '">' + escapeHtml(lb.text) + "</span>"
             })
           }).addTo(layer);
         });
@@ -198,6 +210,10 @@ export function LiveLandMap({
     return { polygons, labels }
   }, [parcels, selectedId, splitPreview])
 
+  const inject = (js: string) => {
+    webviewRef.current?.injectJavaScript(`${js}; true;`)
+  }
+
   // Ship the payload — buffered until the page reports ready. Frames the land
   // only when the fingerprint — ids and point counts — moves; selection taps
   // and analysis updates never yank the viewport.
@@ -206,23 +222,21 @@ export function LiveLandMap({
     let fit: PagePayload["fit"] = null
     if (fitKeyRef.current !== fitKey) {
       fitKeyRef.current = fitKey
-      const points = parcels.flatMap((p) => p.points)
-      fit =
-        points.length === 0
-          ? { view: NEUTRAL_CENTER, zoom: NEUTRAL_ZOOM }
-          : { points }
+      fit = fitFor(parcels)
+    }
+    // Pre-ready renders overwrite the buffer; carry an undelivered fit along
+    // so e.g. a selection tap before the page loads can't strand the map on
+    // the neutral view.
+    if (fit === null && !readyRef.current) {
+      fit = payloadRef.current?.fit ?? null
     }
     const payload: PagePayload = { ...drawable, fit }
     payloadRef.current = payload
-    if (readyRef.current) {
-      webviewRef.current?.injectJavaScript(
-        `window.__setData(${JSON.stringify(payload)}); true;`
-      )
-    }
+    if (readyRef.current) inject(`window.__setData(${jsValue(payload)})`)
   }, [drawable, parcels])
 
   const onMessage = (event: WebViewMessageEvent) => {
-    let msg: { type?: string; id?: string }
+    let msg: { type?: string; id?: string; message?: string }
     try {
       msg = JSON.parse(event.nativeEvent.data)
     } catch {
@@ -232,11 +246,15 @@ export function LiveLandMap({
       onSelectRef.current(msg.id)
     } else if (msg.type === "ready") {
       readyRef.current = true
-      if (payloadRef.current) {
-        webviewRef.current?.injectJavaScript(
-          `window.__setData(${JSON.stringify(payloadRef.current)}); true;`
-        )
+      const payload = payloadRef.current
+      if (payload) {
+        // A second ready is a reloaded page (Android reclaims WebView
+        // renderers) whose viewport reset to neutral — always refit.
+        const fit = payload.fit ?? fitFor(parcels)
+        inject(`window.__setData(${jsValue({ ...payload, fit })})`)
       }
+    } else if (msg.type === "error" && __DEV__) {
+      console.warn("[live-map webview]", msg.message)
     }
   }
 

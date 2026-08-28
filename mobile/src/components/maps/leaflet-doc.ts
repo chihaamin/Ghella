@@ -18,6 +18,18 @@ export const ESRI_TILES =
 const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
 const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 
+/**
+ * Serialize a value into JS source safe to embed in page scripts (both the
+ * document template and `injectJavaScript` strings). `JSON.stringify` alone is
+ * not enough: U+2028/U+2029 are legal inside JSON strings but end a line in JS
+ * source, so farmer-typed text containing them would break the script.
+ */
+export function jsValue(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029")
+}
+
 /** Wrap a map document's body script into the full HTML page. */
 export function leafletDoc(bodyJs: string): string {
   return `<!DOCTYPE html>
@@ -39,8 +51,10 @@ export function leafletDoc(bodyJs: string): string {
 </head>
 <body>
 <div id="map"></div>
-<script src="${LEAFLET_JS}"></script>
 <script>
+  /* Defined in its OWN script tag, before anything that can fail: a syntax
+     error in the body script below would kill that whole tag, but this
+     window.onerror still fires for it and reports it to the RN side. */
   function post(msg) {
     if (window.ReactNativeWebView) {
       window.ReactNativeWebView.postMessage(JSON.stringify(msg));
@@ -49,6 +63,9 @@ export function leafletDoc(bodyJs: string): string {
   window.onerror = function (message) {
     post({ type: "error", message: String(message) });
   };
+</script>
+<script src="${LEAFLET_JS}"></script>
+<script>
   try {
     if (typeof L === "undefined") {
       // The CDN did not load (offline) — tiles could not load either, so the
@@ -66,7 +83,11 @@ ${bodyJs}
 </html>`
 }
 
-/** The mono centroid-label chip, as an inline style for leaflet divIcons. */
+/**
+ * The mono centroid-label chip, as an inline style for leaflet divIcons.
+ * Contains single quotes ('Space Mono'), so never splice it into a quoted
+ * string inside page JS — embed it as a value via `jsValue(LABEL_CHIP_STYLE)`.
+ */
 export const LABEL_CHIP_STYLE =
   "display:inline-block;transform:translate(-50%,-50%);background:rgba(31,36,22,.82);" +
   "color:#f0e3c0;font:700 10px 'Space Mono',monospace;border-radius:7px;" +
