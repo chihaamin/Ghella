@@ -13,15 +13,13 @@ import {
   Animated,
   Easing,
   LayoutAnimation,
-  Platform,
-  UIManager,
   type StyleProp,
   type ViewStyle,
 } from "react-native"
 
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true)
-}
+// No setLayoutAnimationEnabledExperimental here: this app runs the New
+// Architecture, where LayoutAnimation works on Android without it (and the
+// call itself is a warning-emitting no-op).
 
 /** Smooth grow/shrink for the next layout change (no-op on web). */
 export function animateLayout() {
