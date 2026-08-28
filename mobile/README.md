@@ -19,7 +19,7 @@ npx expo start --web    # same app in a browser (react-native-web)
 | State      | zustand (`src/store`) — parcels persisted via AsyncStorage      |
 | Styling    | Plain StyleSheet objects over the Ghella token palette (`src/lib/colors.ts`) |
 | Fonts      | Space Grotesk · Karla · Space Mono · IBM Plex Sans Arabic (`@expo-google-fonts`) |
-| Map        | `react-native-maps` satellite on device; Leaflet + Esri tiles on web |
+| Map        | Leaflet + Esri World Imagery everywhere — DOM on web, WebView on device (keyless, Expo Go-safe) |
 | Icons      | Hand-drawn brand glyphs on `react-native-svg`                   |
 | Location   | `expo-location` (centers the onboarding map)                    |
 
@@ -32,8 +32,10 @@ npx expo start --web    # same app in a browser (react-native-web)
 - `src/components/ui` re-implements the shadcn kit (Button, Badge, Card,
   Segmented, Progress, Slider, Switch, Separator) with the same variant
   vocabulary, plus a hand-built month `Calendar` replacing react-day-picker.
-- Map components are platform-split: `*.native.tsx` (react-native-maps) and
-  `*.web.tsx` (Leaflet), Metro picks per platform.
+- Map components are platform-split: `*.web.tsx` runs Leaflet in the DOM,
+  `*.native.tsx` runs the same Leaflet page inside a WebView (Expo Go ships
+  no react-native-maps on Android, and Esri imagery needs no API key) —
+  Metro picks per platform.
 - The web prototype's reviewer panel became an in-app settings sheet (tap the
   avatar): language EN/FR/AR, the three demo scenarios (offline / rain /
   frost), screen shortcuts and reset.

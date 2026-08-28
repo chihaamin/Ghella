@@ -1,14 +1,8 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { Pressable, StyleSheet, Text, View } from "react-native"
-import MapView, {
-  Marker,
-  Polygon,
-  type MapPressEvent,
-  type MarkerDragEvent,
-  type MarkerDragStartEndEvent,
-  type Region,
-} from "react-native-maps"
+import { WebView, type WebViewMessageEvent } from "react-native-webview"
 
+import { ESRI_TILES, leafletDoc } from "@/components/maps/leaflet-doc"
 import { MAP_START } from "@/data/onboarding"
 import { useT } from "@/i18n/use-t"
 import { C } from "@/lib/colors"
@@ -17,27 +11,18 @@ import { useFF } from "@/theme/fonts"
 
 import type { ParcelMapProps } from "./parcel-map.types"
 
-/** The web map opens at leaflet zoom 16 — latitudeDelta ≈ 360 / 2^zoom. */
-const FIELD_DELTA = 360 / 2 ** 16
-
 /** `bg-ink/85` — C.ink (#1f2416) at 85%. */
 const INK_85 = "rgba(31, 36, 22, 0.85)"
 
-/** `SAT · 36.7078°N 119.6850°W` — the web map's moveend readout. */
-function centerTxt(lat: number, lng: number) {
-  const la = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? "N" : "S"}`
-  const lo = `${Math.abs(lng).toFixed(4)}°${lng >= 0 ? "E" : "W"}`
-  return `SAT · ${la} ${lo}`
-}
-
 /**
- * Satellite parcel drawing. Tapping the imagery drops a corner (as many as the
- * field needs); corners are draggable. Points live in a ref while the user is
- * dragging and are pushed to the store on commit, so a 60 fps drag never
- * re-renders the screen — only this component repaints, via a local tick.
- * When the device reports a position it becomes the map centre — immediately
- * if the fix beat the map, or with one animateToRegion when it arrives late;
- * after that the farmer's panning is never hijacked.
+ * Satellite parcel drawing — leaflet in a WebView (Expo Go has no
+ * react-native-maps, and Esri imagery needs no key). Behavior mirrors the web
+ * build exactly: tapping the imagery drops a corner, corners are draggable,
+ * points live inside the page while dragging and are pushed to the store on
+ * commit. The HUD chips stay native, drawn over the WebView.
+ *
+ * Page → RN: {type:"pts", pts}, {type:"center", lat, lng}, {type:"ready"}.
+ * RN → page: __reset(), __located(lat, lng).
  */
 export function ParcelMap(_props: ParcelMapProps) {
   const { t, isRtl } = useT()
@@ -48,83 +33,154 @@ export function ParcelMap(_props: ParcelMapProps) {
   const locatedAt = useApp((s) => s.locatedAt)
   const mapCenterTxt = useApp((s) => s.mapCenterTxt)
 
-  const mapRef = useRef<MapView | null>(null)
-  const ptsRef = useRef<LatLng[]>([])
-  const draggingRef = useRef(false)
-  // If the geolocation fix already resolved, open straight on it.
-  const centeredOnFixRef = useRef(useApp.getState().locatedAt !== null)
-  const startRef = useRef<LatLng>(useApp.getState().locatedAt ?? MAP_START)
+  const webviewRef = useRef<WebView>(null)
+  const readyRef = useRef(false)
+  /** The fix that arrived before the page was ready, delivered on ready. */
+  const pendingFixRef = useRef<LatLng | null>(null)
+  const lastPtsCountRef = useRef(0)
 
-  // The web map drew imperative leaflet layers from ptsRef; here the same ref
-  // drives declarative <Polygon>/<Marker>, and this tick is the "redraw".
-  const [, setTick] = useState(0)
-  const bump = () => setTick((n) => n + 1)
+  // Built once: if the geolocation fix already resolved, open straight on it.
+  const html = useMemo(() => {
+    const start = useApp.getState().locatedAt ?? MAP_START
+    return leafletDoc(`
+      var SURFACE = ${JSON.stringify(C.surface)};
+      var LEAF_BRIGHT = ${JSON.stringify(C.leafBright)};
+      var LEAF_LIGHT = ${JSON.stringify(C.leafLight)};
+      var WATER = ${JSON.stringify(C.water)};
+      var centeredOnFix = ${useApp.getState().locatedAt !== null};
 
-  // The web fired a synthetic moveend right after init to seed the HUD text.
-  useEffect(() => {
-    const [lat, lng] = startRef.current
-    setState({ mapCenterTxt: centerTxt(lat, lng) })
-  }, [setState])
+      var map = L.map(document.getElementById("map"), {
+        center: [${start[0]}, ${start[1]}],
+        zoom: 16,
+        zoomControl: false,
+        attributionControl: false
+      });
+      L.tileLayer(${JSON.stringify(ESRI_TILES)}, { maxZoom: 19 }).addTo(map);
+      L.control.zoom({ position: "bottomright" }).addTo(map);
+      L.control.attribution({ prefix: false, position: "bottomleft" })
+        .addAttribution("Esri World Imagery").addTo(map);
 
-  const addCorner = (c: { latitude: number; longitude: number }) => {
-    ptsRef.current.push([c.latitude, c.longitude])
-    bump()
-    setPts(ptsRef.current.slice())
+      var poly = L.polygon([], {
+        color: LEAF_LIGHT, weight: 3, fillColor: LEAF_LIGHT, fillOpacity: 0.3
+      }).addTo(map);
+      var marks = L.layerGroup().addTo(map);
+      var here = null;
+      var pts = [];
+      var dragging = false;
+
+      function cornerIcon() {
+        return L.divIcon({
+          className: "",
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+          html: '<div style="width:18px;height:18px;border-radius:50%;background:' + SURFACE +
+            ';border:4px solid ' + LEAF_BRIGHT + ';box-sizing:border-box;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>'
+        });
+      }
+
+      function redraw() {
+        poly.setLatLngs(pts);
+        marks.clearLayers();
+        pts.forEach(function (p, i) {
+          var marker = L.marker(p, { draggable: true, icon: cornerIcon() }).addTo(marks);
+          marker.on("dragstart", function () { dragging = true; });
+          marker.on("drag", function (e) {
+            var ll = e.target.getLatLng();
+            pts[i] = [ll.lat, ll.lng];
+            poly.setLatLngs(pts);
+          });
+          marker.on("dragend", function () {
+            post({ type: "pts", pts: pts });
+            // Let the map's click handler see the drag before it re-arms.
+            setTimeout(function () { dragging = false; }, 80);
+          });
+        });
+      }
+
+      map.on("click", function (e) {
+        if (dragging) return;
+        pts.push([e.latlng.lat, e.latlng.lng]);
+        redraw();
+        post({ type: "pts", pts: pts });
+      });
+
+      map.on("moveend", function () {
+        var cc = map.getCenter();
+        post({ type: "center", lat: cc.lat, lng: cc.lng });
+      });
+      map.fire("moveend");
+
+      window.__reset = function () {
+        pts = [];
+        redraw();
+      };
+
+      // The device fix: recentre once when it arrives, and keep a
+      // "you are here" dot on it.
+      window.__located = function (lat, lng) {
+        if (!centeredOnFix) {
+          centeredOnFix = true;
+          map.setView([lat, lng], 16);
+        }
+        if (here) {
+          here.setLatLng([lat, lng]);
+        } else {
+          here = L.marker([lat, lng], {
+            interactive: false,
+            keyboard: false,
+            icon: L.divIcon({
+              className: "",
+              iconSize: [14, 14],
+              iconAnchor: [7, 7],
+              html: '<div style="width:14px;height:14px;border-radius:50%;background:' + WATER +
+                ';border:3px solid #fff;box-shadow:0 0 0 4px rgba(31,127,184,.25),0 1px 4px rgba(0,0,0,.4)"></div>'
+            })
+          }).addTo(map);
+        }
+      };
+    `)
+  }, [])
+
+  const inject = (js: string) => {
+    webviewRef.current?.injectJavaScript(`${js}; true;`)
   }
 
-  const onMapPress = (e: MapPressEvent) => {
-    if (draggingRef.current) return
-    // Android reports corner taps through onPress too; leaflet markers
-    // swallowed those clicks, so a corner tap must not drop a new corner.
-    if (e.nativeEvent.action === "marker-press") return
-    addCorner(e.nativeEvent.coordinate)
+  const onMessage = (event: WebViewMessageEvent) => {
+    let msg: { type?: string; pts?: LatLng[]; lat?: number; lng?: number }
+    try {
+      msg = JSON.parse(event.nativeEvent.data)
+    } catch {
+      return
+    }
+    if (msg.type === "pts" && Array.isArray(msg.pts)) {
+      lastPtsCountRef.current = msg.pts.length
+      setPts(msg.pts)
+    } else if (msg.type === "center" && msg.lat != null && msg.lng != null) {
+      const lat = `${Math.abs(msg.lat).toFixed(4)}°${msg.lat >= 0 ? "N" : "S"}`
+      const lng = `${Math.abs(msg.lng).toFixed(4)}°${msg.lng >= 0 ? "E" : "W"}`
+      setState({ mapCenterTxt: `SAT · ${lat} ${lng}` })
+    } else if (msg.type === "ready") {
+      readyRef.current = true
+      if (pendingFixRef.current) {
+        const [la, ln] = pendingFixRef.current
+        pendingFixRef.current = null
+        inject(`window.__located(${la}, ${ln})`)
+      }
+    }
   }
 
-  const onCornerDragStart = () => {
-    draggingRef.current = true
-  }
-  const onCornerDrag = (i: number, e: MarkerDragEvent) => {
-    const c = e.nativeEvent.coordinate
-    ptsRef.current[i] = [c.latitude, c.longitude]
-    bump() // the polygon follows the finger; the store is untouched mid-drag
-  }
-  const onCornerDragEnd = (i: number, e: MarkerDragStartEndEvent) => {
-    const c = e.nativeEvent.coordinate
-    ptsRef.current[i] = [c.latitude, c.longitude]
-    setPts(ptsRef.current.slice())
-    // Let the map's press handler see the drag before it re-arms.
-    setTimeout(() => {
-      draggingRef.current = false
-    }, 80)
-  }
-
-  const onRegionChangeComplete = (region: Region) => {
-    setState({ mapCenterTxt: centerTxt(region.latitude, region.longitude) })
-  }
-
-  // The device fix: recentre once when it arrives. The "you are here" dot is
-  // rendered below so the farmer can find their way back after panning.
+  // Late fix → recentre once; buffered until the page reports ready.
   useEffect(() => {
     if (!locatedAt) return
-    if (!centeredOnFixRef.current) {
-      centeredOnFixRef.current = true
-      mapRef.current?.animateToRegion(
-        {
-          latitude: locatedAt[0],
-          longitude: locatedAt[1],
-          latitudeDelta: FIELD_DELTA,
-          longitudeDelta: FIELD_DELTA,
-        },
-        600
-      )
-    }
+    if (readyRef.current) inject(`window.__located(${locatedAt[0]}, ${locatedAt[1]})`)
+    else pendingFixRef.current = locatedAt
   }, [locatedAt])
 
-  // The screen can clear the outline from outside (Reset, or re-entering onboarding).
+  // The screen can clear the outline from outside (Reset, re-entering).
   useEffect(() => {
-    if (pts.length === 0 && ptsRef.current.length > 0) {
-      ptsRef.current = []
-      bump()
+    if (pts.length === 0 && lastPtsCountRef.current > 0) {
+      lastPtsCountRef.current = 0
+      if (readyRef.current) inject("window.__reset()")
     }
   }, [pts])
 
@@ -134,71 +190,20 @@ export function ParcelMap(_props: ParcelMapProps) {
 
   return (
     <View style={styles.frame}>
-      <MapView
-        ref={mapRef}
-        style={styles.map}
-        mapType="satellite"
-        initialRegion={{
-          latitude: startRef.current[0],
-          longitude: startRef.current[1],
-          latitudeDelta: FIELD_DELTA,
-          longitudeDelta: FIELD_DELTA,
-        }}
-        rotateEnabled={false}
-        pitchEnabled={false}
-        zoomControlEnabled
-        toolbarEnabled={false}
-        onPress={onMapPress}
-        onRegionChangeComplete={onRegionChangeComplete}
-      >
-        {/* Leaflet took an empty polygon in stride; native map polygons are
-            only created once there is a coordinate to hold. */}
-        {ptsRef.current.length > 0 && (
-          <Polygon
-            coordinates={ptsRef.current.map(([lat, lng]) => ({
-              latitude: lat,
-              longitude: lng,
-            }))}
-            strokeColor={C.leafLight}
-            strokeWidth={3}
-            // C.leafLight at the web polygon's 0.3 fill opacity.
-            fillColor="rgba(159, 220, 126, 0.3)"
-          />
-        )}
-        {ptsRef.current.map(([lat, lng], i) => (
-          <Marker
-            key={`corner-${i}`}
-            coordinate={{ latitude: lat, longitude: lng }}
-            anchor={{ x: 0.5, y: 0.5 }}
-            tracksViewChanges={false}
-            draggable
-            onDragStart={onCornerDragStart}
-            onDrag={(e) => onCornerDrag(i, e)}
-            onDragEnd={(e) => onCornerDragEnd(i, e)}
-          >
-            <View style={styles.corner} />
-          </Marker>
-        ))}
-        {locatedAt && (
-          <Marker
-            coordinate={{ latitude: locatedAt[0], longitude: locatedAt[1] }}
-            anchor={{ x: 0.5, y: 0.5 }}
-            tracksViewChanges={false}
-            // The web dot was `interactive: false`, so a click on it fell
-            // through to the map and dropped a corner there — a farmer
-            // standing on a corner taps their own dot. Native markers
-            // swallow the tap, so forward it as the corner it meant.
-            onPress={(e) => {
-              if (draggingRef.current) return
-              addCorner(e.nativeEvent.coordinate)
-            }}
-          >
-            <View style={styles.hereHalo}>
-              <View style={styles.hereDot} />
-            </View>
-          </Marker>
-        )}
-      </MapView>
+      <WebView
+        ref={webviewRef}
+        source={{ html }}
+        originWhitelist={["*"]}
+        onMessage={onMessage}
+        javaScriptEnabled
+        domStorageEnabled
+        scrollEnabled={false}
+        nestedScrollEnabled
+        overScrollMode="never"
+        setSupportMultipleWindows={false}
+        allowsInlineMediaPlayback
+        style={styles.host}
+      />
 
       <View pointerEvents="box-none" style={[styles.hudTop, row]}>
         <View pointerEvents="none" style={styles.chip}>
@@ -228,14 +233,6 @@ export function ParcelMap(_props: ParcelMapProps) {
   )
 }
 
-const shadow = {
-  shadowColor: "#000",
-  shadowOpacity: 0.4,
-  shadowRadius: 2,
-  shadowOffset: { width: 0, height: 1 },
-  elevation: 2,
-} as const
-
 const styles = StyleSheet.create({
   frame: {
     position: "relative",
@@ -245,7 +242,7 @@ const styles = StyleSheet.create({
     borderColor: C.lineStrong,
     backgroundColor: "#2c3522",
   },
-  map: { height: 330 },
+  host: { height: 330, backgroundColor: "#2c3522" },
   hudTop: {
     position: "absolute",
     top: 10,
@@ -271,30 +268,4 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   chipHint: { paddingHorizontal: 10 },
-  corner: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: C.surface,
-    borderWidth: 4,
-    borderColor: C.leafBright,
-    ...shadow,
-  },
-  hereHalo: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "rgba(31, 127, 184, 0.25)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  hereDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: C.water,
-    borderWidth: 3,
-    borderColor: "#fff",
-    ...shadow,
-  },
 })

@@ -93,9 +93,15 @@ the web screen scrolls horizontally (use `horizontal` ScrollView for chip rows).
 
 ## Maps
 
-`react-native-maps` must only be imported from `*.native.tsx` files. Web
-fallback (`*.web.tsx`) uses leaflet against the DOM (Expo web). Shared types
-go in a `*.types.ts` file; consumers import the extensionless path.
+Both platforms run leaflet + Esri World Imagery (keyless): `*.web.tsx` uses
+leaflet against the DOM (Expo web); `*.native.tsx` runs the same leaflet page
+inside `react-native-webview` (Expo Go removed react-native-maps on Android,
+and Google tiles would need an API key). The page HTML comes from
+`components/maps/leaflet-doc.ts`; page → RN via postMessage, RN → page via
+`injectJavaScript` calling `window.__*` hooks, gated on the page's
+`{type:"ready"}`. Keep geo math (centroids, areas, fit fingerprints) on the
+RN side — the page is a dumb renderer. Shared types go in a `*.types.ts`
+file; consumers import the extensionless path.
 
 ## Verify
 

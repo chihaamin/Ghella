@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type JSX } from "react"
+import { useEffect, useMemo, useRef, type JSX } from "react"
 import {
   StyleSheet,
   Text,
@@ -6,8 +6,13 @@ import {
   type TextStyle,
   type ViewStyle,
 } from "react-native"
-import MapView, { Marker, Polygon, type Region } from "react-native-maps"
+import { WebView, type WebViewMessageEvent } from "react-native-webview"
 
+import {
+  ESRI_TILES,
+  LABEL_CHIP_STYLE,
+  leafletDoc,
+} from "@/components/maps/leaflet-doc"
 import { useT } from "@/i18n/use-t"
 import { C } from "@/lib/colors"
 import { polygonAreaHa, polygonCentroid } from "@/lib/geo"
@@ -23,88 +28,32 @@ export type { SplitPreview } from "./live-map.types"
 const NEUTRAL_CENTER: LatLng = [34, 9]
 const NEUTRAL_ZOOM = 5
 
-/**
- * The web map's neutral `center`/`zoom` as a region: the world is 360° of
- * latitude-span at zoom 0, halving per level, so z5 ≈ 11.25°.
- */
-const NEUTRAL_REGION: Region = {
-  latitude: NEUTRAL_CENTER[0],
-  longitude: NEUTRAL_CENTER[1],
-  latitudeDelta: 360 / 2 ** NEUTRAL_ZOOM,
-  longitudeDelta: 360 / 2 ** NEUTRAL_ZOOM,
+interface PagePolygon {
+  id: string | null
+  points: LatLng[]
+  color: string
+  weight: number
+  fillOpacity: number
+  dashed: boolean
 }
 
-/**
- * The web map's `fitBounds(..., { maxZoom: 17 })`: never frame tighter than a
- * zoom-17 viewport, so a single tiny parcel can't zoom past the imagery.
- */
-const MIN_FIT_DELTA = 360 / 2 ** 17
-
-/** `[lat, lng]` tuple → the `{latitude, longitude}` react-native-maps wants. */
-function toCoord([latitude, longitude]: LatLng): {
-  latitude: number
-  longitude: number
-} {
-  return { latitude, longitude }
-}
-
-/**
- * "#4c6b2f" + 0.18 → "rgba(76,107,47,0.18)" — leaflet's separate
- * `fillOpacity` baked into the fill colour, which is how native maps take it.
- */
-function withAlpha(hex: string, alpha: number): string {
-  const n = parseInt(hex.slice(1), 16)
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
-}
-
-/**
- * A centroid chip: "North · 0.8 ha", "A · 1.6 ha" — the same mono recipe as
- * the web map's divIcon labels. Native `Text` needs no HTML escaping. The web
- * chip was `pointer-events:none` so a tap fell through to the polygon below
- * and selected it; native markers swallow their taps, so `onPress` forwards
- * the selection the tap would have caused.
- */
-function LabelMarker({
-  at,
-  text,
-  onPress,
-}: {
+interface PageLabel {
   at: LatLng
   text: string
-  onPress: () => void
-}): JSX.Element {
-  const ff = useFF()
-  return (
-    <Marker
-      coordinate={toCoord(at)}
-      anchor={{ x: 0.5, y: 0.5 }}
-      tracksViewChanges={false}
-      onPress={onPress}
-    >
-      <View style={styles.chip}>
-        <Text
-          numberOfLines={1}
-          style={sx<TextStyle>(styles.chipText, { fontFamily: ff.mono.bold })}
-        >
-          {text}
-        </Text>
-      </View>
-    </Marker>
-  )
+}
+
+interface PagePayload {
+  polygons: PagePolygon[]
+  labels: PageLabel[]
+  fit: null | { points: LatLng[] } | { view: LatLng; zoom: number }
 }
 
 /**
- * The live parcels map — every mapped parcel on satellite imagery, each in its
- * own colour with a name · area chip at its centroid. Tapping a polygon
- * selects it; a `splitPreview` dims the parent and overlays the proposed
- * blocks as dashed lettered rings.
- *
- * Pure props — no store, no fetching — so the same component serves the land
- * screen, the recommendation preview and any test without mocking. Unlike the
- * leaflet build, layers are declarative here; only the camera needs imperative
- * care: `fitToCoordinates` is keyed on a fingerprint of ids + point counts so
- * a mere re-render, a selection tap or an analysis landing on a parcel never
- * yanks the viewport.
+ * The live parcels map — leaflet in a WebView (Expo Go has no
+ * react-native-maps; Esri imagery needs no key), mirroring the web build.
+ * All geometry math (centroids, areas, the fit fingerprint) happens HERE so
+ * the page stays a dumb renderer: it receives ready-to-draw polygons and
+ * label chips through `__setData` and posts back only selection taps.
  */
 export function LiveLandMap({
   parcels,
@@ -117,138 +66,195 @@ export function LiveLandMap({
   const { t } = useT()
   const ff = useFF()
 
-  const mapRef = useRef<MapView | null>(null)
-  const [mapReady, setMapReady] = useState(false)
+  const webviewRef = useRef<WebView>(null)
+  const readyRef = useRef(false)
   /** What the viewport currently frames — refit only when this moves. */
   const fitKeyRef = useRef<string | null>(null)
+  const payloadRef = useRef<PagePayload | null>(null)
 
-  // Frame the land. The effect re-runs on any parcels identity change, but
-  // only actually moves the camera when the fingerprint — ids and point
-  // counts — moves, so re-renders, analysis updates and selection taps can't
-  // cause a fit loop or fight the farmer's own panning. Selection is
-  // deliberately NOT part of the key: tapping a parcel restyles it and must
-  // never move the camera.
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || !mapReady) return
-    const fitKey = parcels.map((p) => `${p.id}:${p.points.length}`).join("|")
-    if (fitKeyRef.current === fitKey) return
-    fitKeyRef.current = fitKey
+  // Latest-ref mirror so the message handler always calls the current callback.
+  const onSelectRef = useRef(onSelect)
+  onSelectRef.current = onSelect
 
-    const points = parcels.flatMap((p) => p.points)
-    if (points.length === 0) {
-      map.animateToRegion(NEUTRAL_REGION)
-      return
-    }
+  const html = useMemo(
+    () =>
+      leafletDoc(`
+      var map = L.map(document.getElementById("map"), {
+        center: [${NEUTRAL_CENTER[0]}, ${NEUTRAL_CENTER[1]}],
+        zoom: ${NEUTRAL_ZOOM},
+        zoomControl: false,
+        attributionControl: false
+      });
+      L.tileLayer(${JSON.stringify(ESRI_TILES)}, { maxZoom: 19 }).addTo(map);
+      L.control.attribution({ prefix: false, position: "bottomleft" })
+        .addAttribution("Esri World Imagery").addTo(map);
 
-    // The web capped the fit at zoom 17 so one tiny parcel never zooms past
-    // the imagery. fitToCoordinates has no such cap, so when the land spans
-    // less than a z17 viewport, frame its centre at that zoom instead.
-    const lats = points.map((p) => p[0])
-    const lngs = points.map((p) => p[1])
-    const latMin = Math.min(...lats)
-    const latMax = Math.max(...lats)
-    const lngMin = Math.min(...lngs)
-    const lngMax = Math.max(...lngs)
-    if (latMax - latMin < MIN_FIT_DELTA && lngMax - lngMin < MIN_FIT_DELTA) {
-      map.animateToRegion({
-        latitude: (latMin + latMax) / 2,
-        longitude: (lngMin + lngMax) / 2,
-        latitudeDelta: MIN_FIT_DELTA,
-        longitudeDelta: MIN_FIT_DELTA,
+      var layer = L.layerGroup().addTo(map);
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      }
+
+      window.__setData = function (payload) {
+        layer.clearLayers();
+
+        payload.polygons.forEach(function (p) {
+          var poly = L.polygon(p.points, {
+            color: p.color,
+            fillColor: p.color,
+            weight: p.weight,
+            fillOpacity: p.fillOpacity,
+            dashArray: p.dashed ? "6 6" : null,
+            interactive: p.id !== null
+          }).addTo(layer);
+          if (p.id !== null) {
+            poly.on("click", function () { post({ type: "select", id: p.id }); });
+          }
+        });
+
+        payload.labels.forEach(function (lb) {
+          L.marker(lb.at, {
+            interactive: false,
+            keyboard: false,
+            icon: L.divIcon({
+              className: "",
+              iconSize: [0, 0],
+              html: '<span style="${LABEL_CHIP_STYLE}">' + escapeHtml(lb.text) + "</span>"
+            })
+          }).addTo(layer);
+        });
+
+        if (payload.fit) {
+          if (payload.fit.points) {
+            map.fitBounds(L.latLngBounds(payload.fit.points), {
+              padding: [24, 24],
+              maxZoom: 17
+            });
+          } else {
+            map.setView(payload.fit.view, payload.fit.zoom);
+          }
+        }
+      };
+    `),
+    []
+  )
+
+  // The web build's redraw effect, compressed into a drawable payload. The
+  // fit decision happens in the ship effect below — deciding it here would
+  // consume the fit fingerprint during renders that may never commit.
+  const drawable = useMemo<Omit<PagePayload, "fit">>(() => {
+    const polygons: PagePolygon[] = []
+    const labels: PageLabel[] = []
+
+    for (const parcel of parcels) {
+      if (parcel.points.length < 3) continue
+      const isParent = splitPreview?.parcelId === parcel.id
+      const isSelected = parcel.id === selectedId
+
+      polygons.push({
+        id: parcel.id,
+        points: parcel.points,
+        color: parcel.color,
+        // The split parent fades to a dashed ghost so the proposed blocks on
+        // top of it read as the subject, not as clutter.
+        ...(isParent
+          ? { weight: 2, fillOpacity: 0.05, dashed: true }
+          : isSelected
+            ? { weight: 3, fillOpacity: 0.35, dashed: false }
+            : { weight: 2, fillOpacity: 0.18, dashed: false }),
       })
-      return
+
+      // Past a few parcels the chips collide — label only the selection.
+      const crowded = parcels.length > 4
+      if (!isParent && (!crowded || isSelected)) {
+        labels.push({
+          at: polygonCentroid(parcel.points),
+          text: `${parcel.name} · ${parcel.areaHa.toFixed(1)} ha`,
+        })
+      }
     }
 
-    map.fitToCoordinates(points.map(toCoord), {
-      edgePadding: { top: 24, right: 24, bottom: 24, left: 24 },
-      animated: true,
-    })
-  }, [parcels, mapReady])
+    if (splitPreview) {
+      splitPreview.rings.forEach((ring, i) => {
+        if (ring.length < 3) return
+        polygons.push({
+          id: null,
+          points: ring,
+          color: "#9fdc7e",
+          weight: 2.5,
+          fillOpacity: 0.25,
+          dashed: true,
+        })
+        const letter = String.fromCharCode(65 + (i % 26))
+        labels.push({
+          at: polygonCentroid(ring),
+          text: `${letter} · ${polygonAreaHa(ring).toFixed(1)} ha`,
+        })
+      })
+    }
 
-  // Past a few parcels the chips collide (six side-by-side strips overprint
-  // into noise), so a crowded map labels only the selected parcel.
-  const crowded = parcels.length > 4
+    return { polygons, labels }
+  }, [parcels, selectedId, splitPreview])
+
+  // Ship the payload — buffered until the page reports ready. Frames the land
+  // only when the fingerprint — ids and point counts — moves; selection taps
+  // and analysis updates never yank the viewport.
+  useEffect(() => {
+    const fitKey = parcels.map((p) => `${p.id}:${p.points.length}`).join("|")
+    let fit: PagePayload["fit"] = null
+    if (fitKeyRef.current !== fitKey) {
+      fitKeyRef.current = fitKey
+      const points = parcels.flatMap((p) => p.points)
+      fit =
+        points.length === 0
+          ? { view: NEUTRAL_CENTER, zoom: NEUTRAL_ZOOM }
+          : { points }
+    }
+    const payload: PagePayload = { ...drawable, fit }
+    payloadRef.current = payload
+    if (readyRef.current) {
+      webviewRef.current?.injectJavaScript(
+        `window.__setData(${JSON.stringify(payload)}); true;`
+      )
+    }
+  }, [drawable, parcels])
+
+  const onMessage = (event: WebViewMessageEvent) => {
+    let msg: { type?: string; id?: string }
+    try {
+      msg = JSON.parse(event.nativeEvent.data)
+    } catch {
+      return
+    }
+    if (msg.type === "select" && msg.id) {
+      onSelectRef.current(msg.id)
+    } else if (msg.type === "ready") {
+      readyRef.current = true
+      if (payloadRef.current) {
+        webviewRef.current?.injectJavaScript(
+          `window.__setData(${JSON.stringify(payloadRef.current)}); true;`
+        )
+      }
+    }
+  }
 
   return (
     <View style={sx<ViewStyle>(styles.frame, style)}>
-      <MapView
-        ref={mapRef}
-        style={{ height: heightPx }}
-        mapType="satellite"
-        initialRegion={NEUTRAL_REGION}
-        onMapReady={() => setMapReady(true)}
-        pitchEnabled={false}
-        rotateEnabled={false}
-        toolbarEnabled={false}
-      >
-        {parcels.map((parcel) => {
-          if (parcel.points.length < 3) return null
-          const isParent = splitPreview?.parcelId === parcel.id
-          const isSelected = parcel.id === selectedId
-          const label = `${parcel.name} · ${parcel.areaHa.toFixed(1)} ha`
-          return (
-            <Fragment key={parcel.id}>
-              <Polygon
-                coordinates={parcel.points.map(toCoord)}
-                strokeColor={parcel.color}
-                // The split parent fades to a dashed ghost so the proposed
-                // blocks on top of it read as the subject, not as clutter.
-                fillColor={withAlpha(
-                  parcel.color,
-                  isParent ? 0.05 : isSelected ? 0.35 : 0.18,
-                )}
-                strokeWidth={isParent ? 2 : isSelected ? 3 : 2}
-                lineDashPattern={isParent ? [6, 6] : undefined}
-                tappable
-                onPress={() => onSelect(parcel.id)}
-              />
-              {/* The parent's own chip would sit exactly on the cut line,
-                  under the block letters — drop it while its preview is
-                  showing. */}
-              {!isParent && (!crowded || isSelected) && (
-                <LabelMarker
-                  // `tracksViewChanges={false}` snapshots the chip once, so a
-                  // rename or re-measured area must remount it to show.
-                  key={label}
-                  at={polygonCentroid(parcel.points)}
-                  text={label}
-                  onPress={() => onSelect(parcel.id)}
-                />
-              )}
-            </Fragment>
-          )
-        })}
-
-        {splitPreview
-          ? splitPreview.rings.map((ring, i) => {
-              if (ring.length < 3) return null
-              const letter = String.fromCharCode(65 + (i % 26))
-              const label = `${letter} · ${polygonAreaHa(ring).toFixed(1)} ha`
-              return (
-                <Fragment key={`split-${i}`}>
-                  <Polygon
-                    coordinates={ring.map(toCoord)}
-                    strokeColor="#9fdc7e"
-                    fillColor={withAlpha("#9fdc7e", 0.25)}
-                    strokeWidth={2.5}
-                    lineDashPattern={[6, 6]}
-                  />
-                  {/* On the web a click on a letter chip fell through to the
-                      parent polygon; forward the same selection here. */}
-                  <LabelMarker
-                    // Remount when the ring's area moves — the snapshot chip
-                    // would otherwise keep the old number.
-                    key={label}
-                    at={polygonCentroid(ring)}
-                    text={label}
-                    onPress={() => onSelect(splitPreview.parcelId)}
-                  />
-                </Fragment>
-              )
-            })
-          : null}
-      </MapView>
+      <WebView
+        ref={webviewRef}
+        source={{ html }}
+        originWhitelist={["*"]}
+        onMessage={onMessage}
+        javaScriptEnabled
+        domStorageEnabled
+        scrollEnabled={false}
+        nestedScrollEnabled
+        overScrollMode="never"
+        setSupportMultipleWindows={false}
+        style={{ height: heightPx, backgroundColor: "#2c3522" }}
+      />
 
       <View pointerEvents="none" style={styles.hud}>
         <Text style={sx<TextStyle>(styles.hint, { fontFamily: ff.mono.bold })}>
@@ -268,21 +274,12 @@ const styles = StyleSheet.create({
     borderColor: C.lineStrong,
     backgroundColor: "#2c3522",
   },
-  chip: {
-    backgroundColor: "rgba(31,36,22,0.82)",
-    borderRadius: 7,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  chipText: {
-    fontSize: 10,
-    color: C.cream,
-  },
   hud: {
     position: "absolute",
     left: 10,
     right: 10,
     bottom: 10,
+    zIndex: 600,
     alignItems: "center",
   },
   hint: {
